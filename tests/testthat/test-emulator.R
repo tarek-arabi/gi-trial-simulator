@@ -201,6 +201,10 @@ test_that("fit_emulator rejects malformed input with a message naming the argume
   expect_error(fit_emulator(d$x, d$y, nugget = -1), "`nugget` must be")
   expect_error(fit_emulator(d$x, d$y, lengthscale = c(1, 2)), "`lengthscale` must have length")
   expect_error(fit_emulator(matrix(1:4, ncol = 2), c(1, 2)), "too few")
+  # A single training point (n = 1, d = 1) is the plainest case of "too few".
+  expect_error(fit_emulator(matrix(0.5, ncol = 1), 5), "too few")
+  expect_error(fit_emulator(matrix(letters[1:12], ncol = 1), d$y), "numeric matrix")
+  expect_error(fit_emulator(d$x, letters[1:12]), "`y` must be a plain numeric vector")
 })
 
 test_that("predict and suggest_next_point reject malformed input", {

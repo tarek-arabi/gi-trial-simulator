@@ -165,7 +165,9 @@ emulator_profile_fit <- function(lengthscale, nugget, xs, ys, kernel) {
 #'   Because the process mean is fixed at the sample mean of `y` rather than
 #'   estimated jointly, predictive intervals far outside the design region are
 #'   mildly optimistic; they are also the region where the emulator should not
-#'   be trusted in the first place.
+#'   be trusted in the first place. The process is unconstrained, so a bounded
+#'   output such as power can be emulated as slightly above 1 or below 0 near
+#'   the boundary; emulate `qlogis(power)` and transform back if that matters.
 #'
 #' @seealso [predict.gi_emulator()], [emulator_loo()], [suggest_next_point()]
 #' @examples

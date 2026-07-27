@@ -1,4 +1,6 @@
 ^LICENSE\.md$
+^CITATION\.cff$
+^CONTRIBUTING\.md$
 ^\.github$
 ^analysis$
 ^private$

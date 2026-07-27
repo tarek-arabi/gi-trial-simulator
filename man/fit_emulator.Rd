@@ -60,7 +60,9 @@ an actual simulation run at that design point, not from the emulator.
 Because the process mean is fixed at the sample mean of \code{y} rather than
 estimated jointly, predictive intervals far outside the design region are
 mildly optimistic; they are also the region where the emulator should not
-be trusted in the first place.
+be trusted in the first place. The process is unconstrained, so a bounded
+output such as power can be emulated as slightly above 1 or below 0 near
+the boundary; emulate \code{qlogis(power)} and transform back if that matters.
 }
 \examples{
 x <- matrix(seq(0, 1, length.out = 10), ncol = 1)
