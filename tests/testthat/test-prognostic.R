@@ -173,17 +173,28 @@ test_that("a prognostic score shrinks the risk difference SE and noise does not"
   expect_gt(mean(ratios[3, ]), 1)
 })
 
-# The expensive runs. procova_gain fits two GLMs per replicate for both the
-# null and the alternative, so nsim is kept in the low hundreds to hold the
-# runtime down; the price is a wider Monte Carlo margin, which is why every
-# tolerance below is expressed as a multiple of the MCSE actually achieved
-# rather than a round number. At nsim = 400 and alpha = 0.025 the MCSE of a
-# rejection rate is sqrt(0.025 * 0.975 / 400) ~= 0.0078.
+# The expensive run. procova_gain fits two GLMs per replicate under both the
+# null and the alternative, so this is the slowest test in the package, and the
+# replication count is chosen deliberately rather than for speed.
+#
+# Preserving the type I error rate is the whole claim of this module, so the
+# test has to be able to detect a violation. At alpha = 0.025 the Monte Carlo
+# standard error of a rejection rate is sqrt(0.025 * 0.975 / nsim). At nsim =
+# 400 that is 0.0078, so a 3 MCSE band admits a true rate near 0.048, which is
+# almost double nominal: such a test would pass on a module that was badly
+# broken. At nsim = 3000 the MCSE is 0.0028 and the band is 0.017 to 0.033,
+# which is tight enough for the assertion to mean something.
+#
+# Do not lower this to speed the suite up. The runtime is the cost of the test
+# being able to fail.
+PROCOVA_NSIM <- 3000
+
 gain_strong <- procova_gain(
   scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.22),
   prognostic_spec(),
   coefs = strong_coefs,
-  n_per_arm = 300, nsim = 400, train_n = 4000, seed = 101, calibrate_n = 30000
+  n_per_arm = 300, nsim = PROCOVA_NSIM, train_n = 4000, seed = 101,
+  calibrate_n = 30000
 )
 
 test_that("CRITICAL: prognostic adjustment does not inflate type I error", {
@@ -193,7 +204,7 @@ test_that("CRITICAL: prognostic adjustment does not inflate type I error", {
   expect_lt(abs(gain_strong$rd_type1_adjusted - gain_strong$alpha), 3 * mcse)
   # The unadjusted analysis is the reference: adjustment must not be worse.
   expect_lt(abs(gain_strong$type1_unadjusted - gain_strong$alpha), 3 * mcse)
-  expect_equal(mcse, sqrt(0.025 * 0.975 / 400), tolerance = 0.15)
+  expect_equal(mcse, sqrt(0.025 * 0.975 / PROCOVA_NSIM), tolerance = 0.15)
 })
 
 test_that("procova_gain reports a real efficiency gain on a common estimand", {

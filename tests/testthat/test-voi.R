@@ -188,9 +188,10 @@ test_that("voi_curve returns one row per size with columns plot_evsi can read", 
   expect_s3_class(curve, "data.frame")
   expect_identical(nrow(curve), 3L)
   expect_identical(curve$n_per_arm, c(100L, 400L, 1600L))
-  expect_true(all(
-    c("n_per_arm", "evsi", "mcse", "evpi", "fraction_of_evpi") %in% names(curve)
-  ))
+  expect_identical(
+    names(curve),
+    c("n_per_arm", "evsi", "mcse", "evsi_unpaired", "ess_mean", "evpi", "fraction_of_evpi")
+  )
   expect_true(all(diff(curve$evsi) > 0))
   expect_true(all(curve$fraction_of_evpi > 0))
   # Near saturation the estimated fraction can sit slightly above 1: the
