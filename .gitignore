@@ -1,0 +1,17 @@
+# Private strategy material — never commit
+private/
+
+# R
+.Rproj.user
+.Rhistory
+.RData
+.Rdata
+.Ruserdata
+*.Rcheck/
+renv/library/
+renv/staging/
+renv/local/
+
+# OS / editor
+.DS_Store
+*.Rproj

@@ -1,0 +1,9 @@
+^LICENSE\.md$
+^\.github$
+^analysis$
+^private$
+^CLAUDE\.md$
+^.*\.Rproj$
+^\.Rproj\.user$
+^renv$
+^renv\.lock$

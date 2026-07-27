@@ -1,0 +1,70 @@
+id: hrs_terlipressin
+title: Terlipressin for hepatorenal syndrome
+condition: Hepatorenal syndrome (type 1 / acute kidney injury phenotype)
+version: 1.0.0
+updated: 2026-07-27
+provenance: published_literature
+restricted: false
+license: CC-BY-4.0
+maintainer: Tarek Ziad Arabi <arabi.tarek@gmail.com>
+
+description: >
+  Parameters for planning a randomised trial of terlipressin plus albumin
+  versus midodrine and octreotide plus albumin in hepatorenal syndrome. Present
+  chiefly to demonstrate that the parameter layer generalises beyond the
+  flagship endoscopy question; the effect size below comes from a small trial
+  and should be treated as optimistic.
+
+arms:
+  control:
+    key: midodrine_octreotide
+    label: Midodrine and octreotide plus albumin
+  treatment:
+    key: terlipressin
+    label: Terlipressin plus albumin
+
+sources:
+  cavallin2015:
+    citation: >
+      Cavallin M, Kamath PS, Merli M, Fasolato S, Toniutto P, Salerno F,
+      Bernardi M, Romanelli RG, Colletta C, Salinas F, Di Giacomo A, Ridola L,
+      Fornasiere E, Caraceni P, Morando F, Piano S, Gatta A, Angeli P; Italian
+      Association for the Study of the Liver Study Group on Hepatorenal
+      Syndrome. Terlipressin plus albumin versus midodrine and octreotide plus
+      albumin in the treatment of hepatorenal syndrome: a randomized trial.
+      Hepatology. 2015 Aug;62(2):567-574.
+    pmid: '25644760'
+    doi: 10.1002/hep.27709
+    design: randomised controlled trial
+    n: 49
+    note: >
+      Very small (27 terlipressin, 22 midodrine/octreotide; renal-recovery
+      denominator reported as 21). Effect size is imprecise and probably
+      optimistic.
+
+endpoints:
+  renal_recovery:
+    label: Renal recovery
+    type: binary
+    direction: higher_is_better
+    role: primary
+    control_rate: 0.286
+    treatment_rate: 0.704
+    source: cavallin2015
+    effect_reported: 19/27 (70.4%) versus 6/21 (28.6%), p = 0.01
+    verified: 2026-07-27
+    note: >
+      A 41.8 percentage-point difference from 48 patients. Treat as an upper
+      bound; sensitivity analysis across smaller effects is mandatory.
+
+design_defaults:
+  alpha: 0.025
+  sided: 1
+  power: 0.9
+  allocation_ratio: 1
+
+intercurrent_events:
+  - name: Liver transplantation before endpoint assessment
+    strategy: composite
+  - name: Death before renal-recovery assessment
+    strategy: composite

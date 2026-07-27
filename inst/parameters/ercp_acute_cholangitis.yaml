@@ -1,0 +1,137 @@
+id: ercp_acute_cholangitis
+title: Timing of ERCP in acute cholangitis
+condition: Acute cholangitis (mild-to-moderate, per the anchoring randomised trial)
+version: 1.0.0
+updated: 2026-07-27
+provenance: published_literature
+restricted: false
+license: CC-BY-4.0
+maintainer: Tarek Ziad Arabi <arabi.tarek@gmail.com>
+
+description: >
+  Parameters for planning a definitive randomised trial of urgent (within 24
+  hours) versus early (24 to 48 hours) ERCP in acute cholangitis. Every value
+  is taken from published, peer-reviewed aggregate results; no restricted-use
+  or patient-level data is contained in or derivable from this file.
+
+arms:
+  control:
+    key: early
+    label: Early ERCP (24 to 48 hours)
+  treatment:
+    key: urgent
+    label: Urgent ERCP (within 24 hours)
+
+sources:
+  jagtap2026:
+    citation: >
+      Jagtap N, Rughwani H, Talukdar R, Chavan D, Memon SF, Asif S, Kulkarni AV,
+      Kalapala R, Ramchandani M, Lakhtakia S, Darisetty S, Venkat Rao G, Tandan M,
+      Bruno MJ, Reddy ND. Urgent versus early ERCP in mild-to-moderate acute
+      cholangitis: a randomised controlled trial. Gut. 2026 May 20.
+    pmid: '42161575'
+    doi: 10.1136/gutjnl-2025-337279
+    registration: NCT05920954
+    design: randomised controlled trial
+    n: 304
+    note: >
+      Single centre; 152 urgent versus 152 early. Underpowered for mortality,
+      which is the motivating gap this simulation study addresses.
+  iqbal2020:
+    citation: >
+      Iqbal U, Khara HS, Hu Y, Khan MA, Ovalle A, Siddique O, Sun H,
+      Shellenberger MJ. Emergent versus urgent ERCP in acute cholangitis: a
+      systematic review and meta-analysis. Gastrointest Endosc.
+      2020 Apr;91(4):753-760.e4.
+    pmid: '31628955'
+    doi: 10.1016/j.gie.2019.09.040
+    design: systematic review and meta-analysis
+    n: 7534
+    note: Nine observational studies; ERCP within 48 hours versus later.
+
+endpoints:
+  mortality_30d:
+    label: All-cause mortality at 30 days
+    type: binary
+    direction: lower_is_better
+    role: primary
+    control_rate: 0.0658
+    treatment_rate: 0.0395
+    source: jagtap2026
+    effect_reported: HR 0.70 (95% CI 0.25 to 1.93), p = 0.47
+    verified: 2026-07-27
+    note: >
+      Primary endpoint of the anchoring trial. The confidence interval spans
+      both a large benefit and a large harm, which is precisely why a
+      definitive trial is required.
+
+  mortality_inhospital:
+    label: In-hospital all-cause mortality
+    type: binary
+    direction: lower_is_better
+    role: secondary
+    control_rate: 0.0328
+    treatment_rate: 0.0197
+    source: jagtap2026
+    effect_reported: RR 1.67 (95% CI 0.40 to 7.20) early versus urgent
+    verified: 2026-07-27
+
+  organ_failure_30d:
+    label: Organ failure at 30 days
+    type: binary
+    direction: lower_is_better
+    role: secondary
+    control_rate: 0.171
+    treatment_rate: 0.118
+    source: jagtap2026
+    effect_reported: RR 1.54 (95% CI 0.80 to 2.94) early versus urgent
+    verified: 2026-07-27
+
+  post_ercp_adverse_events:
+    label: Procedure-related adverse events
+    type: binary
+    direction: lower_is_better
+    role: safety
+    control_rate: 0.092
+    treatment_rate: 0.171
+    source: jagtap2026
+    effect_reported: RR 2.03 (95% CI 1.02 to 4.07), higher with urgent ERCP
+    verified: 2026-07-27
+    note: >
+      The only endpoint significant in the anchoring trial, and it favours the
+      control arm. Any definitive design must treat this harm explicitly rather
+      than powering on benefit alone.
+
+priors:
+  mortality_inhospital_meta:
+    label: In-hospital mortality, ERCP within 48 hours versus later
+    scale: odds_ratio
+    estimate: 0.52
+    ci_lower: 0.28
+    ci_upper: 0.98
+    source: iqbal2020
+    verified: 2026-07-27
+  mortality_30d_meta:
+    label: 30-day mortality, ERCP within 48 hours versus later
+    scale: odds_ratio
+    estimate: 0.39
+    ci_lower: 0.14
+    ci_upper: 1.08
+    source: iqbal2020
+    verified: 2026-07-27
+    note: Non-significant.
+
+design_defaults:
+  alpha: 0.025
+  sided: 1
+  power: 0.9
+  allocation_ratio: 1
+
+intercurrent_events:
+  - name: Crossover to earlier ERCP for clinical deterioration
+    strategy: treatment_policy
+    note: >
+      ICH E9(R1) intercurrent event. Deterioration in the early arm prompting
+      ERCP before 24 hours is expected and must be modelled, not ignored.
+  - name: Rescue percutaneous or surgical drainage
+    strategy: treatment_policy
