@@ -8,7 +8,8 @@
 #'
 #' Packs are found on a search path: the directories in
 #' `getOption("gitrialsim.pack_paths")`, then those in the
-#' `GITRIALSIM_PACK_PATH` environment variable (separated by [.Platform$path.sep]),
+#' `GITRIALSIM_PACK_PATH` environment variable (separated by the platform's path
+#' separator, `.Platform$path.sep`),
 #' then the packs shipped inside the installed package. Earlier directories win,
 #' so a pack held outside this repository can extend or override a shipped one
 #' without modifying the package.

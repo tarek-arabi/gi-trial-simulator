@@ -1,0 +1,49 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: "gitrialsim: Simulation-Guided Trial Design for Gastroenterology and Hepatology"
+abstract: >-
+  A parameterization and orchestration layer for planning gastroenterology and
+  hepatology randomised trials. Clinical scenarios are described by versioned,
+  fully cited parameter packs; designs are evaluated by delegating to validated
+  engines (rpact and gsDesign) rather than reimplementing their statistics, and
+  by Monte Carlo simulation for designs whose operating characteristics have no
+  closed form. Results follow the ADEMP reporting framework with Monte Carlo
+  standard errors.
+type: software
+authors:
+  - family-names: Arabi
+    given-names: Tarek Ziad
+    email: arabi.tarek@gmail.com
+    affiliation: >-
+      College of Medicine, Alfaisal University, Riyadh, Saudi Arabia;
+      Department of Medicine, University of Wisconsin-Madison, Madison, USA
+license: GPL-3.0
+repository-code: https://github.com/tarek-arabi/gi-trial-simulator
+version: 0.1.0
+date-released: 2026-07-27
+keywords:
+  - clinical trial simulation
+  - trial design
+  - group sequential design
+  - Bayesian adaptive design
+  - gastroenterology
+  - hepatology
+  - ERCP
+references:
+  - type: article
+    authors:
+      - family-names: Morris
+        given-names: Tim P.
+      - family-names: White
+        given-names: Ian R.
+      - family-names: Crowther
+        given-names: Michael J.
+    title: Using simulation studies to evaluate statistical methods
+    journal: Statistics in Medicine
+    year: 2019
+    volume: 38
+    issue: 11
+    start: 2074
+    end: 2102
+    doi: 10.1002/sim.8086
+    notes: The ADEMP reporting framework this package follows.

@@ -66,9 +66,9 @@ gi_resolve_defaults <- function(scenario, alpha, power, allocation_ratio) {
     power <= 0 || power >= 1) {
     stop("`power` must be a single number strictly between 0 and 1.", call. = FALSE)
   }
-  if (power <= 1 - alpha) {
+  if (power <= alpha) {
     stop(
-      "`power` (", power, ") must exceed 1 - alpha (", 1 - alpha,
+      "`power` (", power, ") must exceed `alpha` (", alpha,
       ") for the design to be meaningful.",
       call. = FALSE
     )
@@ -202,11 +202,13 @@ power_at <- function(design, control_rate, treatment_rate) {
       call. = FALSE
     )
   }
-  for (nm in c("control_rate", "treatment_rate")) {
-    r <- get(nm)
-    if (!is.numeric(r) || length(r) != 1L || is.na(r) || r <= 0 || r >= 1) {
-      stop("`", nm, "` must be a single number strictly between 0 and 1.", call. = FALSE)
-    }
+  if (!is.numeric(control_rate) || length(control_rate) != 1L ||
+    is.na(control_rate) || control_rate <= 0 || control_rate >= 1) {
+    stop("`control_rate` must be a single number strictly between 0 and 1.", call. = FALSE)
+  }
+  if (!is.numeric(treatment_rate) || length(treatment_rate) != 1L ||
+    is.na(treatment_rate) || treatment_rate <= 0 || treatment_rate >= 1) {
+    stop("`treatment_rate` must be a single number strictly between 0 and 1.", call. = FALSE)
   }
 
   pw <- rpact::getPowerRates(
@@ -268,8 +270,9 @@ print.gi_design <- function(x, ...) {
       d$expected_n_h1, d$expected_n_h0
     ))
   }
-  if (!is.null(d$n_sim)) {
-    cat(sprintf("  replicates: %s\n", format(d$n_sim, big.mark = ",")))
+  n_sim <- d$n_sim %||% d$nsim
+  if (!is.null(n_sim)) {
+    cat(sprintf("  replicates: %s\n", format(n_sim, big.mark = ",")))
   }
   if (!is.null(d$seed)) {
     cat(sprintf("  seed: %s\n", as.character(d$seed)))
