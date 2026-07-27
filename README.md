@@ -142,10 +142,18 @@ The largest disagreement across all sixteen configurations is under 1e-6 on the 
 benchmark_report()
 ```
 
-Beyond that cross-engine check, the test suite pins simulated power at rpact's sample size to rpact's
-analytic power within Monte Carlo error, checks that simulating under the null recovers the nominal
-type I error, tests the conjugate posterior probability against exact numerical integration, and
-confirms that prognostic-score adjustment preserves the type I error rate.
+Beyond that cross-engine check, the test suite checks that simulating under the null recovers the
+nominal type I error, tests the conjugate posterior probability against exact numerical integration,
+and confirms that prognostic-score adjustment preserves the type I error rate.
+
+The simulator is also pinned against rpact's analytic power, and that comparison is worth stating
+precisely rather than as a claim of exact agreement. Across five scenarios at 200,000 replications
+the simulator sits consistently 0.3 to 0.7 percentage points **above** rpact, always in the same
+direction. That is a systematic difference rather than noise, and neither tool is wrong: rpact
+evaluates a normal-approximation formula while the simulator simulates the actual discrete binomial
+test. The claim the package makes is therefore that the two agree to within about 0.01 on the
+probability scale, with the simulator biased slightly high. Details in
+[analysis/ercp_flagship/REPORT.md](analysis/ercp_flagship/REPORT.md).
 
 ```bash
 Rscript -e "pkgload::load_all('.'); testthat::test_local()"

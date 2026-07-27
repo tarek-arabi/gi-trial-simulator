@@ -173,11 +173,20 @@ entirely on how prognostic the score is, and the covariate structure used here i
 than estimated from data. Applied to the 3,028-patient trial, 8 percent is roughly 240 patients,
 which is worth having but does not change feasibility.
 
-The honest caveat is that the covariate correlations and coefficients here were chosen to be
-plausible, not fitted to a cholangitis cohort. Replacing them with real aggregate estimates would
-change this number in either direction, and doing so is exactly what an external parameter pack is
-for. **This result should be read as a demonstration that the machinery works and preserves the type
-I error rate, not as an estimate of what prognostic adjustment would deliver in this disease.**
+Two caveats, and the second is the more important.
+
+First, the covariate correlations and coefficients here were chosen to be plausible, not fitted to a
+cholangitis cohort. Replacing them with real aggregate estimates would move this number in either
+direction, and doing so is exactly what an external parameter pack is for.
+
+Second, and this bounds the result in one direction: the prognostic model in these simulations is
+fitted on exactly the covariates that generate the outcome. It is correctly specified by
+construction. A real prognostic model is misspecified relative to the true outcome process, so it
+discriminates worse and the variance reduction is smaller. **The 8 percent figure is therefore an
+upper bound under ideal conditions, not a forecast.**
+
+**This result should be read as a demonstration that the machinery works and preserves the type I
+error rate, not as an estimate of what prognostic adjustment would deliver in this disease.**
 
 These simulations used 500 patients per arm rather than the full 1,514, because each replicate fits
 two generalised linear models. The variance-reduction factor is a property of the covariate's
@@ -240,9 +249,33 @@ All sixteen configurations agree, with a largest absolute difference of **9.3e-0
 (`results/benchmark_rpact_vs_gsdesign.csv`).
 
 **Simulator against analytic power.** At the fixed design's sample size, simulated power was 0.9032
-(Monte Carlo SE 0.0030) against rpact's analytic 0.9001, a difference of **1.04 Monte Carlo standard
-errors**. The simulator reproduces the engine where the engine applies, which is the basis for
-trusting it where the engine does not apply.
+(Monte Carlo SE 0.0030) against rpact's analytic 0.9001, a difference of 1.04 Monte Carlo standard
+errors at this number of replications.
+
+That comparison alone would overstate the agreement, so it is worth stating what a larger check
+shows. Repeated at 200,000 replications across five scenarios, the simulator sits **consistently
+above** rpact, by 0.3 to 0.7 percentage points, with the sign always positive:
+
+| Control / treatment rate | n per arm | rpact analytic | Simulated | Difference | In Monte Carlo SEs |
+|---|---|---|---|---|---|
+| 0.30 / 0.15 | 161 | 0.9004 | 0.9035 | +0.0031 | 4.8 |
+| 0.20 / 0.10 | 266 | 0.9002 | 0.9071 | +0.0070 | 10.7 |
+| 0.10 / 0.05 | 582 | 0.9005 | 0.9052 | +0.0048 | 7.3 |
+| 0.50 / 0.35 | 227 | 0.9011 | 0.9042 | +0.0031 | 4.7 |
+| 0.0658 / 0.0395 | 1,514 | 0.9001 | 0.9040 | +0.0039 | 5.8 |
+
+This is a systematic difference, not Monte Carlo noise, and it is not a defect in either tool. rpact
+evaluates a normal-approximation formula; the simulator simulates the actual discrete binomial test.
+(rpact implements only the normal approximation for two-group rate comparisons, so this is not a
+settings difference.) The two therefore differ by about the amount the normal approximation is off,
+which at these designs is under half a percentage point.
+
+The honest reading is that the simulator reproduces rpact **to within about 0.01 on the probability
+scale, biased slightly high**, rather than agreeing to within Monte Carlo error. That bound is what
+justifies trusting the simulator for the Bayesian design, where no analytic result exists, and it is
+small relative to the differences between designs that this study reports. It also means the power
+figures in the A2 table are likely optimistic by a few tenths of a percentage point, which does not
+change any conclusion here but should not be silently ignored.
 
 **Type I error.** Simulating under the null recovered 0.0244 (Monte Carlo SE 0.0015) against a
 nominal 0.025 for the fixed design, and the Bayesian design's calibrated threshold achieved 0.0246
