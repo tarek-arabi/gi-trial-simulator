@@ -259,7 +259,10 @@ nsim_required <- function(target_mcse, expected_proportion = 0.5) {
 #' specified in writing before any replication is run. Placeholders marked TODO
 #' are the decisions a scenario cannot make on the analyst's behalf.
 #'
-#' @param scenario A `gi_scenario`, as returned by [scenario()].
+#' @param scenario A `gi_scenario` with a binary endpoint, as returned by
+#'   [scenario()]. A continuous scenario is refused with an error naming its
+#'   endpoint type, since the Bernoulli data-generating mechanism written below
+#'   is specific to a binary outcome.
 #' @param file Optional path to write the markdown to. When supplied the file is
 #'   written and the text returned invisibly.
 #' @return A character vector of markdown lines.
@@ -275,6 +278,7 @@ ademp_skeleton <- function(scenario, file = NULL) {
   if (!inherits(scenario, "gi_scenario")) {
     stop("`scenario` must be a gi_scenario, as returned by scenario().", call. = FALSE)
   }
+  gi_require_endpoint_type(scenario, "binary", "ademp_skeleton")
   if (!is.null(file) && (!is.character(file) || length(file) != 1L || !nzchar(file))) {
     stop("`file` must be NULL or a single non-empty path.", call. = FALSE)
   }

@@ -7,7 +7,10 @@
 ademp_skeleton(scenario, file = NULL)
 }
 \arguments{
-\item{scenario}{A \code{gi_scenario}, as returned by \code{\link[=scenario]{scenario()}}.}
+\item{scenario}{A \code{gi_scenario} with a binary endpoint, as returned by
+\code{\link[=scenario]{scenario()}}. A continuous scenario is refused with an error naming its
+endpoint type, since the Bernoulli data-generating mechanism written below
+is specific to a binary outcome.}
 
 \item{file}{Optional path to write the markdown to. When supplied the file is
 written and the text returned invisibly.}

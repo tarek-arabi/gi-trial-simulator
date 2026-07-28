@@ -30,7 +30,10 @@ shared contract (\code{type}, \code{scenario}, \code{alpha}, \code{power}, \code
 \code{n_per_arm}, \code{engine}), \code{detail} holds \code{rpact_design},
 \code{rpact_sample_size}, the unrounded \code{n_fixed}, the rounded \code{n_control} and
 \code{n_treatment}, \code{allocation_ratio}, \code{direction_upper} and the z-scale
-\code{critical_value}.
+\code{critical_value}. For a continuous scenario, \code{detail} additionally holds
+\code{standardised_effect}, the Cohen's d equivalent
+\code{abs(treatment_mean - control_mean) / sd}, and \code{engine} is
+\code{"rpact::getSampleSizeMeans"} rather than \code{"rpact::getSampleSizeRates"}.
 
 \code{n_total} is always the sum of the two arm sizes. \code{n_per_arm} is the
 common arm size and is defined only under 1:1 allocation; when
@@ -44,7 +47,9 @@ quietly using the wrong number. Read \code{detail$n_treatment} and
 \description{
 Delegates entirely to \code{rpact}: a one-stage group-sequential design supplies
 the critical value, and \code{\link[rpact:getSampleSizeRates]{rpact::getSampleSizeRates()}} supplies the sample
-size for the two binomial rates carried by the scenario.
+size for a binary endpoint's two rates, or \code{\link[rpact:getSampleSizeMeans]{rpact::getSampleSizeMeans()}}
+the sample size for a continuous endpoint's two means and common SD,
+whichever the scenario carries.
 }
 \examples{
 d <- design_fixed(scenario("ercp_acute_cholangitis"))

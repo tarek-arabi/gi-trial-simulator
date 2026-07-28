@@ -97,7 +97,8 @@ gi_check_analyses_can_stop <- function(efficacy_z, futility_z, info,
 #' Size a group-sequential two-arm superiority trial
 #'
 #' Builds the boundaries with [rpact::getDesignGroupSequential()] and the
-#' sample size with [rpact::getSampleSizeRates()]. Nothing about the
+#' sample size with [rpact::getSampleSizeRates()] for a binary endpoint, or
+#' [rpact::getSampleSizeMeans()] for a continuous one. Nothing about the
 #' boundaries, the alpha spending or the expected sample sizes is computed
 #' here.
 #'
@@ -125,7 +126,10 @@ gi_check_analyses_can_stop <- function(efficacy_z, futility_z, info,
 #'   `type_of_design`, `futility`, `binding_futility`, the unrounded
 #'   `n_fixed`, the rounded `n_control` and `n_treatment`, `allocation_ratio`,
 #'   `direction_upper`, and the underlying `rpact_design` and
-#'   `rpact_sample_size`.
+#'   `rpact_sample_size`. For a continuous scenario, `detail` additionally
+#'   holds `standardised_effect`, the Cohen's d equivalent
+#'   `abs(treatment_mean - control_mean) / sd`, and `engine` is
+#'   `"rpact::getSampleSizeMeans"` rather than `"rpact::getSampleSizeRates"`.
 #'
 #'   `n_total` is the maximum sample size, always the sum of the two arm
 #'   sizes. `n_per_arm` is the common arm size and is defined only under 1:1
@@ -181,12 +185,26 @@ design_group_sequential <- function(scenario, alpha = NULL, power = NULL, k = 3,
     typeBetaSpending = beta_spending,
     bindingFutility = binding
   )
-  ss <- rpact::getSampleSizeRates(
-    design = rpact_design,
-    pi1 = scenario$treatment_rate,
-    pi2 = scenario$control_rate,
-    allocationRatioPlanned = opts$allocation_ratio
-  )
+
+  is_continuous <- identical(scenario$endpoint_type, "continuous")
+  if (is_continuous) {
+    means <- gi_means(scenario)
+    ss <- rpact::getSampleSizeMeans(
+      design = rpact_design,
+      alternative = means$effect,
+      stDev = means$sd,
+      allocationRatioPlanned = opts$allocation_ratio
+    )
+    engine <- "rpact::getSampleSizeMeans"
+  } else {
+    ss <- rpact::getSampleSizeRates(
+      design = rpact_design,
+      pi1 = scenario$treatment_rate,
+      pi2 = scenario$control_rate,
+      allocationRatioPlanned = opts$allocation_ratio
+    )
+    engine <- "rpact::getSampleSizeRates"
+  }
 
   n <- gi_round_arms(
     as.numeric(ss$maxNumberOfSubjects1),
@@ -207,6 +225,31 @@ design_group_sequential <- function(scenario, alpha = NULL, power = NULL, k = 3,
   efficacy_z <- as.numeric(rpact_design$criticalValues)
   gi_check_analyses_can_stop(efficacy_z, futility_z, info, type_of_design)
 
+  detail <- list(
+    rpact_design = rpact_design,
+    rpact_sample_size = ss,
+    k = k,
+    type_of_design = type_of_design,
+    futility = futility,
+    binding_futility = isTRUE(binding),
+    information_rates = info,
+    efficacy_z = efficacy_z,
+    futility_z = futility_z,
+    cumulative_alpha_spent = as.numeric(rpact_design$alphaSpent),
+    n_cumulative = n_cumulative,
+    n_fixed = as.numeric(ss$nFixed),
+    n_control = n$n_control,
+    n_treatment = n$n_treatment,
+    allocation_ratio = opts$allocation_ratio,
+    direction_upper = gi_direction_upper(scenario),
+    expected_n_h0 = as.numeric(ss$expectedNumberOfSubjectsH0),
+    expected_n_h01 = as.numeric(ss$expectedNumberOfSubjectsH01),
+    expected_n_h1 = as.numeric(ss$expectedNumberOfSubjectsH1)
+  )
+  if (is_continuous) {
+    detail$standardised_effect <- means$effect / means$sd
+  }
+
   structure(
     list(
       type = "group_sequential",
@@ -215,28 +258,8 @@ design_group_sequential <- function(scenario, alpha = NULL, power = NULL, k = 3,
       power = opts$power,
       n_total = n$n_total,
       n_per_arm = n$n_per_arm,
-      engine = "rpact::getSampleSizeRates",
-      detail = list(
-        rpact_design = rpact_design,
-        rpact_sample_size = ss,
-        k = k,
-        type_of_design = type_of_design,
-        futility = futility,
-        binding_futility = isTRUE(binding),
-        information_rates = info,
-        efficacy_z = efficacy_z,
-        futility_z = futility_z,
-        cumulative_alpha_spent = as.numeric(rpact_design$alphaSpent),
-        n_cumulative = n_cumulative,
-        n_fixed = as.numeric(ss$nFixed),
-        n_control = n$n_control,
-        n_treatment = n$n_treatment,
-        allocation_ratio = opts$allocation_ratio,
-        direction_upper = gi_direction_upper(scenario),
-        expected_n_h0 = as.numeric(ss$expectedNumberOfSubjectsH0),
-        expected_n_h01 = as.numeric(ss$expectedNumberOfSubjectsH01),
-        expected_n_h1 = as.numeric(ss$expectedNumberOfSubjectsH1)
-      )
+      engine = engine,
+      detail = detail
     ),
     class = c("gi_design", "list")
   )

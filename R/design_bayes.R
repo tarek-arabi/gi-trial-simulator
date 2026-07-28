@@ -394,7 +394,10 @@ resolve_workers <- function(workers) {
 #' impressive precision. Set `post_draws` for accuracy first, then `nsim` for
 #' precision.
 #'
-#' @param scenario A `gi_scenario`, as returned by [scenario()].
+#' @param scenario A `gi_scenario` with a binary endpoint, as returned by
+#'   [scenario()]. A continuous scenario is refused with an error naming its
+#'   endpoint type: this design's Beta-Bernoulli conjugate model has no
+#'   continuous analogue here.
 #' @param n_max Maximum total sample size across both arms.
 #' @param looks Number of analyses, including the final one. `looks = 1` is a
 #'   single final analysis with no interim monitoring.
@@ -460,6 +463,7 @@ design_bayesian <- function(scenario, n_max, looks = 3, prior = c(1, 1),
   if (!inherits(scenario, "gi_scenario")) {
     stop("`scenario` must be a gi_scenario, as returned by scenario().", call. = FALSE)
   }
+  gi_require_endpoint_type(scenario, "binary", "design_bayesian")
   n_max <- check_count(n_max, "n_max", min = 4L)
   looks <- check_count(looks, "looks", min = 1L)
   prior <- check_prior(prior)
@@ -593,7 +597,10 @@ design_bayesian <- function(scenario, n_max, looks = 3, prior = c(1, 1),
 #' `1 - target_alpha`, which is the least favourable threshold the search can
 #' return.
 #'
-#' @param scenario A `gi_scenario`, as returned by [scenario()].
+#' @param scenario A `gi_scenario` with a binary endpoint, as returned by
+#'   [scenario()]. A continuous scenario is refused with an error naming its
+#'   endpoint type: this design's Beta-Bernoulli conjugate model has no
+#'   continuous analogue here.
 #' @param n_max Maximum total sample size across both arms.
 #' @param target_alpha Target one-sided simulated type I error.
 #' @param looks Number of analyses, including the final one.
@@ -634,6 +641,7 @@ calibrate_bayesian <- function(scenario, n_max, target_alpha = 0.025, looks = 3,
   if (!inherits(scenario, "gi_scenario")) {
     stop("`scenario` must be a gi_scenario, as returned by scenario().", call. = FALSE)
   }
+  gi_require_endpoint_type(scenario, "binary", "calibrate_bayesian")
   n_max <- check_count(n_max, "n_max", min = 4L)
   looks <- check_count(looks, "looks", min = 1L)
   prior <- check_prior(prior)

@@ -2,16 +2,29 @@
 % Please edit documentation in R/design_fixed.R
 \name{power_at}
 \alias{power_at}
-\title{Analytic power of a sized design at given event rates}
+\title{Analytic power of a sized design at given event rates or means}
 \usage{
-power_at(design, control_rate, treatment_rate)
+power_at(
+  design,
+  control_rate = NULL,
+  treatment_rate = NULL,
+  control_mean = NULL,
+  treatment_mean = NULL,
+  sd = NULL
+)
 }
 \arguments{
 \item{design}{A \code{gi_design} of type \code{"fixed"} or \code{"group_sequential"}.}
 
-\item{control_rate}{Control-arm event probability, in (0, 1).}
+\item{control_rate, treatment_rate}{Control- and treatment-arm event
+probability, in (0, 1). Used when \code{design} was built on a binary
+endpoint; leave \code{NULL} (the default) for a continuous design and supply
+\code{control_mean}/\code{treatment_mean}/\code{sd} instead.}
 
-\item{treatment_rate}{Treatment-arm event probability, in (0, 1).}
+\item{control_mean, treatment_mean, sd}{Control- and treatment-arm means, and
+the common within-arm standard deviation to evaluate power at. Used when
+\code{design} was built on a continuous endpoint; leave \code{NULL} (the default)
+for a binary design and supply \code{control_rate}/\code{treatment_rate} instead.}
 }
 \value{
 A single number, rpact's \code{overallReject}: the probability that the
@@ -31,10 +44,11 @@ which this function does not report. Use \code{futility = "none"} to see the
 efficacy-only quantity.
 }
 \description{
-Re-evaluates an already-sized design at rates that may differ from the ones
-it was built on, which is how the Monte Carlo simulator in this package is
-checked against an analytic reference. Computed by
-\code{\link[rpact:getPowerRates]{rpact::getPowerRates()}}, holding the design's maximum sample size fixed.
+Re-evaluates an already-sized design at rates or means that may differ from
+the ones it was built on, which is how the Monte Carlo simulator in this
+package is checked against an analytic reference. Computed by
+\code{\link[rpact:getPowerRates]{rpact::getPowerRates()}} for a binary design, or \code{\link[rpact:getPowerMeans]{rpact::getPowerMeans()}}
+for a continuous one, holding the design's maximum sample size fixed.
 }
 \examples{
 d <- design_fixed(scenario("ercp_acute_cholangitis"))

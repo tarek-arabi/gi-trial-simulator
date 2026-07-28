@@ -1,10 +1,15 @@
 #' Parameter packs
 #'
 #' A parameter pack is a YAML file describing one clinical scenario: its arms,
-#' its endpoints with control and treatment event rates, the published sources
-#' each value came from, and the design defaults a trialist would start from.
-#' Packs are data, not code, so they can be versioned, cited and audited
-#' independently of the engine that consumes them.
+#' its endpoints, the published sources each value came from, and the design
+#' defaults a trialist would start from. An endpoint has `type: binary` and
+#' carries `control_rate` and `treatment_rate` (event probabilities strictly
+#' between 0 and 1), or `type: continuous` and carries `control_mean`,
+#' `treatment_mean` and a common within-arm `sd` (all finite numbers, `sd`
+#' strictly positive). Either type also declares a `direction`
+#' (`lower_is_better` or `higher_is_better`) and a `source` naming an entry in
+#' the pack's `sources`. Packs are data, not code, so they can be versioned,
+#' cited and audited independently of the engine that consumes them.
 #'
 #' Packs are found on a search path: the directories in
 #' `getOption("gitrialsim.pack_paths")`, then those in the
@@ -117,9 +122,11 @@ load_pack <- function(id) {
 #' Validate a parameter pack
 #'
 #' Checks the structural and numerical invariants a pack must satisfy before
-#' any design is built on it: required fields present, event rates strictly
-#' inside (0, 1), every endpoint citing a source that the pack declares, and no
-#' endpoint whose direction contradicts its own rates.
+#' any design is built on it: required fields present, binary event rates
+#' strictly inside (0, 1), continuous means finite and their `sd` a single
+#' positive finite number, every endpoint citing a source that the pack
+#' declares, no endpoint carrying fields that belong to the other endpoint
+#' type, and no endpoint whose direction contradicts its own rates or means.
 #'
 #' @param pack A `gi_pack`, as returned by [load_pack()].
 #' @return The pack, invisibly, if valid. Otherwise an error describing every
@@ -151,17 +158,48 @@ validate_pack <- function(pack) {
     ep <- pack$endpoints[[key]]
     where <- paste0("endpoint '", key, "'")
 
-    if (!identical(ep$type, "binary")) {
-      problems <- c(problems, paste0(where, ": only binary endpoints are supported"))
-      next
-    }
-    for (rate_field in c("control_rate", "treatment_rate")) {
-      r <- ep[[rate_field]]
-      if (is.null(r) || !is.numeric(r) || length(r) != 1L || is.na(r) || r <= 0 || r >= 1) {
+    if (identical(ep$type, "binary")) {
+      for (rate_field in c("control_rate", "treatment_rate")) {
+        r <- ep[[rate_field]]
+        if (is.null(r) || !is.numeric(r) || length(r) != 1L || is.na(r) || r <= 0 || r >= 1) {
+          problems <- c(problems, paste0(
+            where, ": ", rate_field, " must be a single number strictly between 0 and 1"
+          ))
+        }
+      }
+      for (mean_field in c("control_mean", "treatment_mean", "sd")) {
+        if (!is.null(ep[[mean_field]])) {
+          problems <- c(problems, paste0(
+            where, ": binary endpoint must not carry '", mean_field, "'"
+          ))
+        }
+      }
+    } else if (identical(ep$type, "continuous")) {
+      for (mean_field in c("control_mean", "treatment_mean")) {
+        m <- ep[[mean_field]]
+        if (is.null(m) || !is.numeric(m) || length(m) != 1L || is.na(m) || !is.finite(m)) {
+          problems <- c(problems, paste0(
+            where, ": ", mean_field, " must be a single finite number"
+          ))
+        }
+      }
+      s <- ep$sd
+      if (is.null(s) || !is.numeric(s) || length(s) != 1L || is.na(s) ||
+        !is.finite(s) || s <= 0) {
         problems <- c(problems, paste0(
-          where, ": ", rate_field, " must be a single number strictly between 0 and 1"
+          where, ": sd must be a single positive finite number"
         ))
       }
+      for (rate_field in c("control_rate", "treatment_rate")) {
+        if (!is.null(ep[[rate_field]])) {
+          problems <- c(problems, paste0(
+            where, ": continuous endpoint must not carry '", rate_field, "'"
+          ))
+        }
+      }
+    } else {
+      problems <- c(problems, paste0(where, ": type must be binary or continuous"))
+      next
     }
     if (is.null(ep$direction) ||
       !ep$direction %in% c("lower_is_better", "higher_is_better")) {
@@ -201,20 +239,32 @@ validate_pack <- function(pack) {
 #' Build a scenario from a pack endpoint
 #'
 #' A scenario is the minimal object every design function in this package
-#' consumes: two event rates, the direction of benefit, and enough provenance
-#' to reconstruct where the rates came from.
+#' consumes: the endpoint's data-generating parameters (event rates for a
+#' binary endpoint, or two means and a common SD for a continuous one), the
+#' direction of benefit, and enough provenance to reconstruct where the values
+#' came from.
 #'
 #' @param pack A `gi_pack` or a pack id.
 #' @param endpoint Endpoint key. Defaults to the endpoint whose `role` is
 #'   `primary`.
-#' @param control_rate,treatment_rate Optional overrides, for sensitivity
-#'   analysis across values the published sources do not supply.
-#' @return An object of class `gi_scenario`.
+#' @param control_rate,treatment_rate Optional overrides for a binary
+#'   endpoint, for sensitivity analysis across values the published sources do
+#'   not supply.
+#' @param control_mean,treatment_mean,sd Optional overrides for a continuous
+#'   endpoint, for the same purpose.
+#' @return An object of class `gi_scenario`, carrying an `endpoint_type` field
+#'   (`"binary"` or `"continuous"`). A binary scenario has `control_rate` and
+#'   `treatment_rate` set and `control_mean`, `treatment_mean`, `sd` left
+#'   `NULL`; a continuous scenario is the mirror image. Code that reads one set
+#'   of fields on a scenario of the other type must fail with a message naming
+#'   the endpoint type rather than compute with a missing value, which is why
+#'   the fields are left `NULL` instead of `NA`.
 #' @examples
 #' scenario("ercp_acute_cholangitis")
 #' scenario("ercp_acute_cholangitis", treatment_rate = 0.05)
 #' @export
-scenario <- function(pack, endpoint = NULL, control_rate = NULL, treatment_rate = NULL) {
+scenario <- function(pack, endpoint = NULL, control_rate = NULL, treatment_rate = NULL,
+                     control_mean = NULL, treatment_mean = NULL, sd = NULL) {
   if (is.character(pack)) pack <- load_pack(pack)
   stopifnot(inherits(pack, "gi_pack"))
 
@@ -239,31 +289,99 @@ scenario <- function(pack, endpoint = NULL, control_rate = NULL, treatment_rate 
     )
   }
 
-  p_control <- control_rate %||% ep$control_rate
-  p_treatment <- treatment_rate %||% ep$treatment_rate
-  for (r in c(p_control, p_treatment)) {
-    if (!is.numeric(r) || length(r) != 1L || is.na(r) || r <= 0 || r >= 1) {
-      stop("Event rates must be single numbers strictly between 0 and 1.", call. = FALSE)
-    }
+  endpoint_type <- ep$type %||% "binary"
+  if (!endpoint_type %in% c("binary", "continuous")) {
+    stop(
+      "Endpoint '", endpoint, "' has type '", endpoint_type,
+      "'; expected binary or continuous.",
+      call. = FALSE
+    )
   }
 
-  structure(
-    list(
-      pack_id = pack$id,
-      pack_version = as.character(pack$version),
-      endpoint = endpoint,
-      label = ep$label %||% endpoint,
+  base <- list(
+    pack_id = pack$id,
+    pack_version = as.character(pack$version),
+    endpoint = endpoint,
+    endpoint_type = endpoint_type,
+    label = ep$label %||% endpoint,
+    direction = ep$direction,
+    control_arm = pack$arms$control$label %||% "Control",
+    treatment_arm = pack$arms$treatment$label %||% "Treatment",
+    source = pack$sources[[ep$source]]$citation %||% NA_character_,
+    defaults = pack$design_defaults %||% list()
+  )
+
+  if (identical(endpoint_type, "binary")) {
+    if (!is.null(control_mean) || !is.null(treatment_mean) || !is.null(sd)) {
+      stop(
+        "`control_mean`, `treatment_mean` and `sd` apply only to continuous ",
+        "endpoints; endpoint '", endpoint, "' is binary. Use `control_rate` and ",
+        "`treatment_rate`.",
+        call. = FALSE
+      )
+    }
+    p_control <- control_rate %||% ep$control_rate
+    p_treatment <- treatment_rate %||% ep$treatment_rate
+    for (r in c(p_control, p_treatment)) {
+      if (!is.numeric(r) || length(r) != 1L || is.na(r) || r <= 0 || r >= 1) {
+        stop("Event rates must be single numbers strictly between 0 and 1.", call. = FALSE)
+      }
+    }
+    scenario_obj <- c(base, list(
       control_rate = p_control,
       treatment_rate = p_treatment,
-      direction = ep$direction,
-      control_arm = pack$arms$control$label %||% "Control",
-      treatment_arm = pack$arms$treatment$label %||% "Treatment",
-      source = pack$sources[[ep$source]]$citation %||% NA_character_,
-      overridden = !is.null(control_rate) || !is.null(treatment_rate),
-      defaults = pack$design_defaults %||% list()
-    ),
-    class = c("gi_scenario", "list")
-  )
+      control_mean = NULL,
+      treatment_mean = NULL,
+      sd = NULL,
+      overridden = !is.null(control_rate) || !is.null(treatment_rate)
+    ))
+  } else {
+    if (!is.null(control_rate) || !is.null(treatment_rate)) {
+      stop(
+        "`control_rate` and `treatment_rate` apply only to binary endpoints; ",
+        "endpoint '", endpoint, "' is continuous. Use `control_mean`, ",
+        "`treatment_mean` and `sd`.",
+        call. = FALSE
+      )
+    }
+    m_control <- control_mean %||% ep$control_mean
+    m_treatment <- treatment_mean %||% ep$treatment_mean
+    s <- sd %||% ep$sd
+    for (m in c(m_control, m_treatment)) {
+      if (!is.numeric(m) || length(m) != 1L || is.na(m) || !is.finite(m)) {
+        stop("Endpoint means must be single finite numbers.", call. = FALSE)
+      }
+    }
+    if (!is.numeric(s) || length(s) != 1L || is.na(s) || !is.finite(s) || s <= 0) {
+      stop("`sd` must be a single positive finite number.", call. = FALSE)
+    }
+    scenario_obj <- c(base, list(
+      control_rate = NULL,
+      treatment_rate = NULL,
+      control_mean = m_control,
+      treatment_mean = m_treatment,
+      sd = s,
+      overridden = !is.null(control_mean) || !is.null(treatment_mean) || !is.null(sd)
+    ))
+  }
+
+  structure(scenario_obj, class = c("gi_scenario", "list"))
+}
+
+# Functions that can only handle one endpoint type call this to fail with a
+# message naming the endpoint type, rather than reading a NULL control_rate/
+# control_mean and computing something meaningless from it.
+gi_require_endpoint_type <- function(scenario, type, fn_name) {
+  actual <- scenario$endpoint_type %||% "binary"
+  if (!identical(actual, type)) {
+    stop(
+      "`", fn_name, "` supports ", type, " endpoints only; scenario '",
+      scenario$pack_id, " / ", scenario$endpoint, "' has endpoint_type '",
+      actual, "'.",
+      call. = FALSE
+    )
+  }
+  invisible(scenario)
 }
 
 #' @export
@@ -283,14 +401,28 @@ print.gi_pack <- function(x, ...) {
 print.gi_scenario <- function(x, ...) {
   cat("<gi_scenario> ", x$pack_id, " / ", x$endpoint, "\n", sep = "")
   cat(x$label, "\n", sep = "")
-  cat(sprintf(
-    "  %-28s %.4f\n  %-28s %.4f\n",
-    x$control_arm, x$control_rate, x$treatment_arm, x$treatment_rate
-  ))
-  cat("  direction: ", x$direction,
-    if (isTRUE(x$overridden)) "   (rates overridden)" else "", "\n",
-    sep = ""
-  )
+  if (identical(x$endpoint_type, "continuous")) {
+    cat(sprintf(
+      "  %-28s %.4f\n  %-28s %.4f\n",
+      x$control_arm, x$control_mean, x$treatment_arm, x$treatment_mean
+    ))
+    cat(sprintf(
+      "  %-28s %.4f\n", "common SD", x$sd
+    ))
+    cat("  direction: ", x$direction,
+      if (isTRUE(x$overridden)) "   (means overridden)" else "", "\n",
+      sep = ""
+    )
+  } else {
+    cat(sprintf(
+      "  %-28s %.4f\n  %-28s %.4f\n",
+      x$control_arm, x$control_rate, x$treatment_arm, x$treatment_rate
+    ))
+    cat("  direction: ", x$direction,
+      if (isTRUE(x$overridden)) "   (rates overridden)" else "", "\n",
+      sep = ""
+    )
+  }
   invisible(x)
 }
 

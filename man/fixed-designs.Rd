@@ -4,7 +4,8 @@
 \alias{fixed-designs}
 \title{Fixed-sample designs}
 \description{
-Sizing a two-arm superiority trial with a binary endpoint. Every number is
-produced by \code{rpact}; this file contributes argument marshalling, the
-direction convention, and integer rounding, nothing statistical.
+Sizing a two-arm superiority trial with a binary or a continuous endpoint.
+Every number is produced by \code{rpact}; this file contributes argument
+marshalling, the direction convention, and integer rounding, nothing
+statistical.
 }

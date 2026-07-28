@@ -1,8 +1,9 @@
 #' Fixed-sample designs
 #'
-#' Sizing a two-arm superiority trial with a binary endpoint. Every number is
-#' produced by `rpact`; this file contributes argument marshalling, the
-#' direction convention, and integer rounding, nothing statistical.
+#' Sizing a two-arm superiority trial with a binary or a continuous endpoint.
+#' Every number is produced by `rpact`; this file contributes argument
+#' marshalling, the direction convention, and integer rounding, nothing
+#' statistical.
 #'
 #' @name fixed-designs
 NULL
@@ -13,6 +14,25 @@ NULL
 # so pi1 is the treatment arm and pi2 the control arm.
 gi_rates <- function(scenario) {
   list(pi1 = scenario$treatment_rate, pi2 = scenario$control_rate)
+}
+
+# getSampleSizeMeans has no per-arm mean arguments: it takes a single
+# `alternative`, the assumed mean difference, and requires it to be strictly
+# positive (thetaH0 defaults to 0 and rpact errors if alternative <= thetaH0).
+# Sample size is symmetric in which arm is "larger", so the magnitude is all a
+# sizing call needs; direction is applied later, in power_at(), the same way
+# gi_direction_upper() is applied for getPowerRates rather than for
+# getSampleSizeRates. Verified empirically: getSampleSizeMeans(alternative = 5,
+# stDev = 10, allocationRatioPlanned = 2) returns nFixed1 = 127.38,
+# nFixed2 = 63.69, ratio exactly 2, so nFixed1 is the numerator arm of
+# allocationRatioPlanned exactly as pi1 is for getSampleSizeRates. Treatment is
+# therefore assigned to "arm 1" here for the same reason pi1 is the treatment
+# rate above: allocation_ratio is documented as treatment-to-control.
+gi_means <- function(scenario) {
+  list(
+    effect = abs(scenario$treatment_mean - scenario$control_mean),
+    sd = scenario$sd
+  )
 }
 
 # Superiority is defined by the endpoint's direction, not by the assumed
@@ -33,20 +53,38 @@ gi_check_scenario <- function(scenario) {
       call. = FALSE
     )
   }
-  favours_treatment <- if (gi_direction_upper(scenario)) {
-    scenario$treatment_rate > scenario$control_rate
+  if (identical(scenario$endpoint_type, "continuous")) {
+    favours_treatment <- if (gi_direction_upper(scenario)) {
+      scenario$treatment_mean > scenario$control_mean
+    } else {
+      scenario$treatment_mean < scenario$control_mean
+    }
+    if (!favours_treatment) {
+      warning(
+        "`scenario` assumes no treatment benefit on '", scenario$endpoint,
+        "' (", scenario$direction, ", control ", signif(scenario$control_mean, 4),
+        " vs treatment ", signif(scenario$treatment_mean, 4),
+        "). The design is sized for an effect of this magnitude, but the ",
+        "one-sided superiority test points the other way.",
+        call. = FALSE
+      )
+    }
   } else {
-    scenario$treatment_rate < scenario$control_rate
-  }
-  if (!favours_treatment) {
-    warning(
-      "`scenario` assumes no treatment benefit on '", scenario$endpoint,
-      "' (", scenario$direction, ", control ", signif(scenario$control_rate, 4),
-      " vs treatment ", signif(scenario$treatment_rate, 4),
-      "). The design is sized for an effect of this magnitude, but the ",
-      "one-sided superiority test points the other way.",
-      call. = FALSE
-    )
+    favours_treatment <- if (gi_direction_upper(scenario)) {
+      scenario$treatment_rate > scenario$control_rate
+    } else {
+      scenario$treatment_rate < scenario$control_rate
+    }
+    if (!favours_treatment) {
+      warning(
+        "`scenario` assumes no treatment benefit on '", scenario$endpoint,
+        "' (", scenario$direction, ", control ", signif(scenario$control_rate, 4),
+        " vs treatment ", signif(scenario$treatment_rate, 4),
+        "). The design is sized for an effect of this magnitude, but the ",
+        "one-sided superiority test points the other way.",
+        call. = FALSE
+      )
+    }
   }
   invisible(scenario)
 }
@@ -115,7 +153,9 @@ gi_round_arms <- function(n_treatment_raw, n_control_raw) {
 #'
 #' Delegates entirely to `rpact`: a one-stage group-sequential design supplies
 #' the critical value, and [rpact::getSampleSizeRates()] supplies the sample
-#' size for the two binomial rates carried by the scenario.
+#' size for a binary endpoint's two rates, or [rpact::getSampleSizeMeans()]
+#' the sample size for a continuous endpoint's two means and common SD,
+#' whichever the scenario carries.
 #'
 #' @param scenario A `gi_scenario`, as returned by [scenario()].
 #' @param alpha One-sided type I error rate. Defaults to
@@ -128,7 +168,10 @@ gi_round_arms <- function(n_treatment_raw, n_control_raw) {
 #'   `n_per_arm`, `engine`), `detail` holds `rpact_design`,
 #'   `rpact_sample_size`, the unrounded `n_fixed`, the rounded `n_control` and
 #'   `n_treatment`, `allocation_ratio`, `direction_upper` and the z-scale
-#'   `critical_value`.
+#'   `critical_value`. For a continuous scenario, `detail` additionally holds
+#'   `standardised_effect`, the Cohen's d equivalent
+#'   `abs(treatment_mean - control_mean) / sd`, and `engine` is
+#'   `"rpact::getSampleSizeMeans"` rather than `"rpact::getSampleSizeRates"`.
 #'
 #'   `n_total` is always the sum of the two arm sizes. `n_per_arm` is the
 #'   common arm size and is defined only under 1:1 allocation; when
@@ -146,7 +189,7 @@ design_fixed <- function(scenario, alpha = NULL, power = NULL,
                          allocation_ratio = NULL) {
   gi_check_scenario(scenario)
   opts <- gi_resolve_defaults(scenario, alpha, power, allocation_ratio)
-  rates <- gi_rates(scenario)
+  is_continuous <- identical(scenario$endpoint_type, "continuous")
 
   rpact_design <- rpact::getDesignGroupSequential(
     kMax = 1L,
@@ -154,14 +197,42 @@ design_fixed <- function(scenario, alpha = NULL, power = NULL,
     beta = 1 - opts$power,
     sided = 1L
   )
-  ss <- rpact::getSampleSizeRates(
-    design = rpact_design,
-    pi1 = rates$pi1,
-    pi2 = rates$pi2,
-    allocationRatioPlanned = opts$allocation_ratio
-  )
+
+  if (is_continuous) {
+    means <- gi_means(scenario)
+    ss <- rpact::getSampleSizeMeans(
+      design = rpact_design,
+      alternative = means$effect,
+      stDev = means$sd,
+      allocationRatioPlanned = opts$allocation_ratio
+    )
+    engine <- "rpact::getSampleSizeMeans"
+  } else {
+    rates <- gi_rates(scenario)
+    ss <- rpact::getSampleSizeRates(
+      design = rpact_design,
+      pi1 = rates$pi1,
+      pi2 = rates$pi2,
+      allocationRatioPlanned = opts$allocation_ratio
+    )
+    engine <- "rpact::getSampleSizeRates"
+  }
 
   n <- gi_round_arms(ss$nFixed1, ss$nFixed2)
+
+  detail <- list(
+    rpact_design = rpact_design,
+    rpact_sample_size = ss,
+    n_fixed = as.numeric(ss$nFixed),
+    n_control = n$n_control,
+    n_treatment = n$n_treatment,
+    allocation_ratio = opts$allocation_ratio,
+    direction_upper = gi_direction_upper(scenario),
+    critical_value = as.numeric(rpact_design$criticalValues)
+  )
+  if (is_continuous) {
+    detail$standardised_effect <- means$effect / means$sd
+  }
 
   structure(
     list(
@@ -171,32 +242,30 @@ design_fixed <- function(scenario, alpha = NULL, power = NULL,
       power = opts$power,
       n_total = n$n_total,
       n_per_arm = n$n_per_arm,
-      engine = "rpact::getSampleSizeRates",
-      detail = list(
-        rpact_design = rpact_design,
-        rpact_sample_size = ss,
-        n_fixed = as.numeric(ss$nFixed),
-        n_control = n$n_control,
-        n_treatment = n$n_treatment,
-        allocation_ratio = opts$allocation_ratio,
-        direction_upper = gi_direction_upper(scenario),
-        critical_value = as.numeric(rpact_design$criticalValues)
-      )
+      engine = engine,
+      detail = detail
     ),
     class = c("gi_design", "list")
   )
 }
 
-#' Analytic power of a sized design at given event rates
+#' Analytic power of a sized design at given event rates or means
 #'
-#' Re-evaluates an already-sized design at rates that may differ from the ones
-#' it was built on, which is how the Monte Carlo simulator in this package is
-#' checked against an analytic reference. Computed by
-#' [rpact::getPowerRates()], holding the design's maximum sample size fixed.
+#' Re-evaluates an already-sized design at rates or means that may differ from
+#' the ones it was built on, which is how the Monte Carlo simulator in this
+#' package is checked against an analytic reference. Computed by
+#' [rpact::getPowerRates()] for a binary design, or [rpact::getPowerMeans()]
+#' for a continuous one, holding the design's maximum sample size fixed.
 #'
 #' @param design A `gi_design` of type `"fixed"` or `"group_sequential"`.
-#' @param control_rate Control-arm event probability, in (0, 1).
-#' @param treatment_rate Treatment-arm event probability, in (0, 1).
+#' @param control_rate,treatment_rate Control- and treatment-arm event
+#'   probability, in (0, 1). Used when `design` was built on a binary
+#'   endpoint; leave `NULL` (the default) for a continuous design and supply
+#'   `control_mean`/`treatment_mean`/`sd` instead.
+#' @param control_mean,treatment_mean,sd Control- and treatment-arm means, and
+#'   the common within-arm standard deviation to evaluate power at. Used when
+#'   `design` was built on a continuous endpoint; leave `NULL` (the default)
+#'   for a binary design and supply `control_rate`/`treatment_rate` instead.
 #' @return A single number, rpact's `overallReject`: the probability that the
 #'   trial crosses an efficacy boundary in the direction of treatment
 #'   superiority, given the design's total sample size and allocation ratio.
@@ -218,7 +287,8 @@ design_fixed <- function(scenario, alpha = NULL, power = NULL,
 #' power_at(d, control_rate = 0.0658, treatment_rate = 0.0395)
 #' power_at(d, control_rate = 0.0658, treatment_rate = 0.0658)
 #' @export
-power_at <- function(design, control_rate, treatment_rate) {
+power_at <- function(design, control_rate = NULL, treatment_rate = NULL,
+                     control_mean = NULL, treatment_mean = NULL, sd = NULL) {
   if (!inherits(design, "gi_design")) {
     stop("`design` must be a gi_design.", call. = FALSE)
   }
@@ -227,6 +297,48 @@ power_at <- function(design, control_rate, treatment_rate) {
       "`design` of type '", design$type,
       "' carries no rpact design; power_at() supports fixed and ",
       "group_sequential designs.",
+      call. = FALSE
+    )
+  }
+
+  endpoint_type <- design$scenario$endpoint_type %||% "binary"
+
+  if (identical(endpoint_type, "continuous")) {
+    if (!is.null(control_rate) || !is.null(treatment_rate)) {
+      stop(
+        "`design` has a continuous endpoint; power_at() takes `control_mean`, ",
+        "`treatment_mean` and `sd` for this design, not `control_rate`/",
+        "`treatment_rate`.",
+        call. = FALSE
+      )
+    }
+    if (!is.numeric(control_mean) || length(control_mean) != 1L ||
+      is.na(control_mean) || !is.finite(control_mean)) {
+      stop("`control_mean` must be a single finite number.", call. = FALSE)
+    }
+    if (!is.numeric(treatment_mean) || length(treatment_mean) != 1L ||
+      is.na(treatment_mean) || !is.finite(treatment_mean)) {
+      stop("`treatment_mean` must be a single finite number.", call. = FALSE)
+    }
+    if (!is.numeric(sd) || length(sd) != 1L || is.na(sd) || !is.finite(sd) || sd <= 0) {
+      stop("`sd` must be a single positive finite number.", call. = FALSE)
+    }
+
+    pw <- rpact::getPowerMeans(
+      design = design$detail$rpact_design,
+      alternative = treatment_mean - control_mean,
+      stDev = sd,
+      directionUpper = design$detail$direction_upper,
+      maxNumberOfSubjects = design$n_total,
+      allocationRatioPlanned = design$detail$allocation_ratio
+    )
+    return(as.numeric(pw$overallReject))
+  }
+
+  if (!is.null(control_mean) || !is.null(treatment_mean) || !is.null(sd)) {
+    stop(
+      "`design` has a binary endpoint; power_at() takes `control_rate`/",
+      "`treatment_rate` for this design, not `control_mean`/`treatment_mean`/`sd`.",
       call. = FALSE
     )
   }
@@ -259,13 +371,27 @@ print.gi_design <- function(x, ...) {
   cat("<gi_design> ", x$type, "\n", sep = "")
 
   s <- x$scenario
+  d <- x$detail %||% list()
   if (!is.null(s)) {
     cat("  ", s$pack_id, " / ", s$endpoint, "\n", sep = "")
     cat("  ", s$label, "\n", sep = "")
-    cat(sprintf(
-      "    %-30s %.4f\n    %-30s %.4f\n",
-      s$control_arm, s$control_rate, s$treatment_arm, s$treatment_rate
-    ))
+    if (identical(s$endpoint_type, "continuous")) {
+      cat(sprintf(
+        "    %-30s %.4f\n    %-30s %.4f\n",
+        s$control_arm, s$control_mean, s$treatment_arm, s$treatment_mean
+      ))
+      cat(sprintf("    %-30s %.4f\n", "common SD", s$sd))
+      if (!is.null(d$standardised_effect)) {
+        cat(sprintf(
+          "    %-30s %.4f\n", "standardised effect (d)", d$standardised_effect
+        ))
+      }
+    } else {
+      cat(sprintf(
+        "    %-30s %.4f\n    %-30s %.4f\n",
+        s$control_arm, s$control_rate, s$treatment_arm, s$treatment_rate
+      ))
+    }
   }
 
   cat(sprintf(
@@ -273,7 +399,6 @@ print.gi_design <- function(x, ...) {
     x$alpha,
     if (is.null(x$power) || is.na(x$power)) "by simulation" else sprintf("%.3f", x$power)
   ))
-  d <- x$detail %||% list()
   n_per_arm <- x$n_per_arm
   balanced <- length(n_per_arm) == 1L && !is.na(n_per_arm)
   if (balanced) {

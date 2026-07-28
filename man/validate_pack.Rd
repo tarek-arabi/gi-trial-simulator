@@ -15,9 +15,11 @@ problem found.
 }
 \description{
 Checks the structural and numerical invariants a pack must satisfy before
-any design is built on it: required fields present, event rates strictly
-inside (0, 1), every endpoint citing a source that the pack declares, and no
-endpoint whose direction contradicts its own rates.
+any design is built on it: required fields present, binary event rates
+strictly inside (0, 1), continuous means finite and their \code{sd} a single
+positive finite number, every endpoint citing a source that the pack
+declares, no endpoint carrying fields that belong to the other endpoint
+type, and no endpoint whose direction contradicts its own rates or means.
 }
 \examples{
 validate_pack(load_pack("hrs_terlipressin"))

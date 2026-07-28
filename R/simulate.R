@@ -161,6 +161,19 @@ GI_SCALAR_SEED_RNG <- c(
   scenario
 }
 
+# The binomial simulators in this file draw event counts, not continuous
+# outcomes, so a continuous scenario must be refused here rather than read as
+# a NULL control_rate and silently simulated as nonsense (or, with a stray
+# non-NULL rate left over from a mistaken override, as a wrong number that
+# looks plausible). This is the one guard behind simulate_fixed(),
+# simulate_group_sequential() (via design$scenario) and simulate_grid() (via
+# every scenario in the grid and every design_fn(scenario)$scenario).
+.check_binary_scenario <- function(scenario, arg = "scenario", fn_name) {
+  .check_scenario(scenario, arg)
+  gi_require_endpoint_type(scenario, "binary", fn_name)
+  scenario
+}
+
 # +1 when a higher event rate is the benefit, -1 when a lower one is.
 .benefit_sign <- function(direction) {
   switch(direction,
@@ -355,7 +368,7 @@ sim_seeds <- function(seed, n) {
 #' @export
 simulate_fixed <- function(scenario, n_per_arm, nsim = 10000, alpha = 0.025,
                            seed = 1, workers = 1) {
-  .check_scenario(scenario)
+  .check_binary_scenario(scenario, fn_name = "simulate_fixed")
   n_per_arm <- .check_count(n_per_arm, "n_per_arm")
   nsim <- .check_count(nsim, "nsim")
   alpha <- .check_alpha(alpha)
@@ -565,7 +578,10 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
       call. = FALSE
     )
   }
-  scenario <- .check_scenario(design$scenario, "design$scenario")
+  scenario <- .check_binary_scenario(
+    design$scenario, "design$scenario",
+    fn_name = "simulate_group_sequential"
+  )
   nsim <- .check_count(nsim, "nsim")
   seed <- .check_seed(seed)
   .check_count(workers, "workers")
@@ -728,7 +744,10 @@ simulate_grid <- function(scenario_grid, design_fn, nsim = 10000, seed = 1,
     stop("`scenario_grid` must be a gi_scenario or a non-empty list of them.", call. = FALSE)
   }
   for (i in seq_along(scenario_grid)) {
-    .check_scenario(scenario_grid[[i]], paste0("scenario_grid[[", i, "]]"))
+    .check_binary_scenario(
+      scenario_grid[[i]], paste0("scenario_grid[[", i, "]]"),
+      fn_name = "simulate_grid"
+    )
   }
   if (!is.function(design_fn)) {
     stop("`design_fn` must be a function taking a gi_scenario.", call. = FALSE)
@@ -754,7 +773,10 @@ simulate_grid <- function(scenario_grid, design_fn, nsim = 10000, seed = 1,
       # The grid scenario, not the scenario the design was powered on, supplies
       # the data-generating rates. Without this a grid of scenarios would be
       # simulated at whatever rates design_fn happened to build its design from.
-      .check_scenario(design$scenario, "design_fn(scenario)$scenario")
+      .check_binary_scenario(
+        design$scenario, "design_fn(scenario)$scenario",
+        fn_name = "simulate_grid"
+      )
       if (!identical(design$scenario$direction, sc$direction)) {
         stop(
           "`design_fn` returned a group-sequential design whose endpoint ",

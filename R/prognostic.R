@@ -692,8 +692,11 @@ procova_replicate <- function(spec, coefs, link, n_per_arm, a0, delta, fit,
 #' is the expected behaviour of two different estimands and says nothing about
 #' whether either number is right.
 #'
-#' @param scenario A `gi_scenario` from [scenario()], supplying the control and
-#'   treatment event rates, the direction of benefit and the default alpha.
+#' @param scenario A `gi_scenario` from [scenario()] with a binary endpoint,
+#'   supplying the control and treatment event rates, the direction of benefit
+#'   and the default alpha. A continuous scenario is refused with an error
+#'   naming its endpoint type, since the prognostic model here is fit and
+#'   calibrated against a binary outcome.
 #' @param spec A `gi_cohort_spec` describing the baseline covariates.
 #' @param coefs Named numeric vector of true covariate coefficients on the link
 #'   scale. Larger values make the score more prognostic.
@@ -761,6 +764,7 @@ procova_gain <- function(scenario, spec, coefs, n_per_arm, nsim = 2000,
   if (!inherits(scenario, "gi_scenario")) {
     stop("`scenario` must be a gi_scenario from scenario().", call. = FALSE)
   }
+  gi_require_endpoint_type(scenario, "binary", "procova_gain")
   if (!inherits(spec, "gi_cohort_spec")) {
     stop("`spec` must be a gi_cohort_spec from cohort_spec().", call. = FALSE)
   }

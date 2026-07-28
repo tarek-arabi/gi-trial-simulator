@@ -4,7 +4,15 @@
 \alias{scenario}
 \title{Build a scenario from a pack endpoint}
 \usage{
-scenario(pack, endpoint = NULL, control_rate = NULL, treatment_rate = NULL)
+scenario(
+  pack,
+  endpoint = NULL,
+  control_rate = NULL,
+  treatment_rate = NULL,
+  control_mean = NULL,
+  treatment_mean = NULL,
+  sd = NULL
+)
 }
 \arguments{
 \item{pack}{A \code{gi_pack} or a pack id.}
@@ -12,16 +20,28 @@ scenario(pack, endpoint = NULL, control_rate = NULL, treatment_rate = NULL)
 \item{endpoint}{Endpoint key. Defaults to the endpoint whose \code{role} is
 \code{primary}.}
 
-\item{control_rate, treatment_rate}{Optional overrides, for sensitivity
-analysis across values the published sources do not supply.}
+\item{control_rate, treatment_rate}{Optional overrides for a binary
+endpoint, for sensitivity analysis across values the published sources do
+not supply.}
+
+\item{control_mean, treatment_mean, sd}{Optional overrides for a continuous
+endpoint, for the same purpose.}
 }
 \value{
-An object of class \code{gi_scenario}.
+An object of class \code{gi_scenario}, carrying an \code{endpoint_type} field
+(\code{"binary"} or \code{"continuous"}). A binary scenario has \code{control_rate} and
+\code{treatment_rate} set and \code{control_mean}, \code{treatment_mean}, \code{sd} left
+\code{NULL}; a continuous scenario is the mirror image. Code that reads one set
+of fields on a scenario of the other type must fail with a message naming
+the endpoint type rather than compute with a missing value, which is why
+the fields are left \code{NULL} instead of \code{NA}.
 }
 \description{
 A scenario is the minimal object every design function in this package
-consumes: two event rates, the direction of benefit, and enough provenance
-to reconstruct where the rates came from.
+consumes: the endpoint's data-generating parameters (event rates for a
+binary endpoint, or two means and a common SD for a continuous one), the
+direction of benefit, and enough provenance to reconstruct where the values
+came from.
 }
 \examples{
 scenario("ercp_acute_cholangitis")

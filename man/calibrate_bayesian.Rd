@@ -20,7 +20,10 @@ calibrate_bayesian(
 )
 }
 \arguments{
-\item{scenario}{A \code{gi_scenario}, as returned by \code{\link[=scenario]{scenario()}}.}
+\item{scenario}{A \code{gi_scenario} with a binary endpoint, as returned by
+\code{\link[=scenario]{scenario()}}. A continuous scenario is refused with an error naming its
+endpoint type: this design's Beta-Bernoulli conjugate model has no
+continuous analogue here.}
 
 \item{n_max}{Maximum total sample size across both arms.}
 

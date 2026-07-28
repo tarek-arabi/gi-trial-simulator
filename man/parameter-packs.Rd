@@ -5,10 +5,15 @@
 \title{Parameter packs}
 \description{
 A parameter pack is a YAML file describing one clinical scenario: its arms,
-its endpoints with control and treatment event rates, the published sources
-each value came from, and the design defaults a trialist would start from.
-Packs are data, not code, so they can be versioned, cited and audited
-independently of the engine that consumes them.
+its endpoints, the published sources each value came from, and the design
+defaults a trialist would start from. An endpoint has \code{type: binary} and
+carries \code{control_rate} and \code{treatment_rate} (event probabilities strictly
+between 0 and 1), or \code{type: continuous} and carries \code{control_mean},
+\code{treatment_mean} and a common within-arm \code{sd} (all finite numbers, \code{sd}
+strictly positive). Either type also declares a \code{direction}
+(\code{lower_is_better} or \code{higher_is_better}) and a \code{source} naming an entry in
+the pack's \code{sources}. Packs are data, not code, so they can be versioned,
+cited and audited independently of the engine that consumes them.
 }
 \details{
 Packs are found on a search path: the directories in

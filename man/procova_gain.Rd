@@ -20,8 +20,11 @@ procova_gain(
 )
 }
 \arguments{
-\item{scenario}{A \code{gi_scenario} from \code{\link[=scenario]{scenario()}}, supplying the control and
-treatment event rates, the direction of benefit and the default alpha.}
+\item{scenario}{A \code{gi_scenario} from \code{\link[=scenario]{scenario()}} with a binary endpoint,
+supplying the control and treatment event rates, the direction of benefit
+and the default alpha. A continuous scenario is refused with an error
+naming its endpoint type, since the prognostic model here is fit and
+calibrated against a binary outcome.}
 
 \item{spec}{A \code{gi_cohort_spec} describing the baseline covariates.}
 

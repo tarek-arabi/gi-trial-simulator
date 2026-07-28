@@ -1,0 +1,149 @@
+id: dph_colonoscopy_sedation
+title: Adjunctive diphenhydramine for moderate sedation in colonoscopy
+condition: Adults undergoing colonoscopy under moderate (conscious) sedation
+version: 1.0.0
+updated: 2026-07-27
+provenance: published_literature
+restricted: false
+license: CC-BY-4.0
+maintainer: Tarek Ziad Arabi <arabi.tarek@gmail.com>
+
+description: >
+  Parameters for planning a definitive randomised trial of intravenous
+  diphenhydramine 50 mg added to standard moderate sedation for colonoscopy,
+  versus standard sedation alone. Two randomised trials exist and they disagree
+  on the outcome that matters most practically, namely whether diphenhydramine
+  reduces the dose of opioid required. That disagreement is the gap a definitive
+  trial would close. Every value is a published aggregate result.
+
+arms:
+  control:
+    key: placebo
+    label: Standard sedation plus placebo
+  treatment:
+    key: diphenhydramine
+    label: Standard sedation plus diphenhydramine 50 mg IV
+
+sources:
+  nusrat2018:
+    citation: >
+      Nusrat S, Madhoun MF, Tierney WM. Use of diphenhydramine as an adjunctive
+      sedative for colonoscopy in patients on chronic opioid therapy: a
+      randomized controlled trial. Gastrointest Endosc. 2018 Oct;88(4):695-702.
+    pmid: '29689257'
+    doi: 10.1016/j.gie.2018.04.2342
+    registration: NCT01967433
+    design: randomised controlled trial
+    n: 119
+    note: >
+      61 diphenhydramine versus 58 placebo, all on chronic opioid therapy,
+      sedated with fentanyl and midazolam. Found NO reduction in sedative dose
+      but better sedation quality scores. Single centre, USA.
+  elshahawy2019:
+    citation: >
+      El Shahawy MS, El-Fayoumy M. The Influence of Adding Diphenhydramine
+      Before Initiation of Moderate Sedation with Midazolam and Pethidine for
+      Improving Quality of Colonoscopy. J Natl Med Assoc.
+      2019 Dec;111(6):648-655.
+    pmid: '31587885'
+    doi: 10.1016/j.jnma.2019.09.001
+    design: randomised controlled trial
+    n: 100
+    note: >
+      53 diphenhydramine versus 47 placebo, unselected diagnostic colonoscopy,
+      sedated with pethidine and midazolam. Found a REDUCED pethidine dose and
+      much higher satisfaction. Single centre, Egypt. Analysed 100 of 150
+      enrolled, so attrition was substantial and unexplained in the abstract.
+
+endpoints:
+  opioid_dose:
+    label: Opioid dose administered during the procedure
+    type: continuous
+    unit: mg pethidine equivalent
+    direction: lower_is_better
+    role: primary
+    control_mean: 69.9
+    treatment_mean: 61.2
+    sd: 29.0
+    source: elshahawy2019
+    effect_reported: 61.2 +/- 21.0 mg versus 69.9 +/- 35.4 mg, p < 0.01
+    verified: 2026-07-27
+    note: >
+      The sd here is a pooled approximation of the two reported arm standard
+      deviations (21.0 and 35.4), which differ markedly. The larger placebo-arm
+      variance is itself informative and a definitive trial should not assume
+      equal variances without checking. This is the endpoint on which the two
+      trials disagree: Nusrat found no dose difference at all (fentanyl 125.4
+      +/- 56.2 versus 126.9 +/- 53.5 micrograms, p = 0.88).
+
+  physician_sedation_score:
+    label: Physician-rated quality of sedation
+    type: continuous
+    unit: points on a 10-point scale
+    direction: higher_is_better
+    role: secondary
+    control_mean: 5.3
+    treatment_mean: 6.2
+    sd: 1.15
+    source: nusrat2018
+    effect_reported: 6.2 +/- 1.1 versus 5.3 +/- 1.2, p = 0.0002
+    verified: 2026-07-27
+
+  patient_pain_score:
+    label: Patient-reported procedural pain
+    type: continuous
+    unit: points on a 10-point scale
+    direction: lower_is_better
+    role: secondary
+    control_mean: 3.09
+    treatment_mean: 2.05
+    sd: 3.15
+    source: nusrat2018
+    effect_reported: 2.05 +/- 2.17 versus 3.09 +/- 3.95, p = 0.047
+    verified: 2026-07-27
+    note: >
+      The standard deviations exceed the means, so this score is heavily skewed
+      and a mean difference is a questionable summary. A definitive trial should
+      pre-specify a rank-based analysis or a responder definition instead.
+
+  patient_very_satisfied:
+    label: Patient very satisfied with the procedure
+    type: binary
+    direction: higher_is_better
+    role: secondary
+    control_rate: 0.5957
+    treatment_rate: 0.8867
+    source: elshahawy2019
+    effect_reported: 88.67 percent versus 59.57 percent, p < 0.001
+    verified: 2026-07-27
+    note: >
+      A 29 percentage-point difference from 100 patients at a single centre, in
+      an unblinded-to-effect subjective outcome. Treat as an optimistic upper
+      bound rather than a planning estimate.
+
+  endoscopist_very_satisfied:
+    label: Endoscopist very satisfied with the procedure
+    type: binary
+    direction: higher_is_better
+    role: secondary
+    control_rate: 0.5106
+    treatment_rate: 0.7735
+    source: elshahawy2019
+    effect_reported: 77.35 percent versus 51.06 percent, p < 0.001
+    verified: 2026-07-27
+
+design_defaults:
+  alpha: 0.025
+  sided: 1
+  power: 0.9
+  allocation_ratio: 1
+
+intercurrent_events:
+  - name: Conversion to deep sedation or anaesthesia support for failed sedation
+    strategy: composite
+    note: >
+      A patient who cannot be sedated adequately is the population of interest,
+      so treating conversion as a treatment failure is more faithful than
+      excluding them.
+  - name: Procedure abandoned before caecal intubation
+    strategy: treatment_policy

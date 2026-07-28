@@ -49,7 +49,10 @@ Beyond the shared contract, \code{detail} holds \code{efficacy_z}, \code{futilit
 \code{type_of_design}, \code{futility}, \code{binding_futility}, the unrounded
 \code{n_fixed}, the rounded \code{n_control} and \code{n_treatment}, \code{allocation_ratio},
 \code{direction_upper}, and the underlying \code{rpact_design} and
-\code{rpact_sample_size}.
+\code{rpact_sample_size}. For a continuous scenario, \code{detail} additionally
+holds \code{standardised_effect}, the Cohen's d equivalent
+\code{abs(treatment_mean - control_mean) / sd}, and \code{engine} is
+\code{"rpact::getSampleSizeMeans"} rather than \code{"rpact::getSampleSizeRates"}.
 
 \code{n_total} is the maximum sample size, always the sum of the two arm
 sizes. \code{n_per_arm} is the common arm size and is defined only under 1:1
@@ -64,7 +67,8 @@ returns its no-futility floor of -6.
 }
 \description{
 Builds the boundaries with \code{\link[rpact:getDesignGroupSequential]{rpact::getDesignGroupSequential()}} and the
-sample size with \code{\link[rpact:getSampleSizeRates]{rpact::getSampleSizeRates()}}. Nothing about the
+sample size with \code{\link[rpact:getSampleSizeRates]{rpact::getSampleSizeRates()}} for a binary endpoint, or
+\code{\link[rpact:getSampleSizeMeans]{rpact::getSampleSizeMeans()}} for a continuous one. Nothing about the
 boundaries, the alpha spending or the expected sample sizes is computed
 here.
 }
