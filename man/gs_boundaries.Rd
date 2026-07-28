@@ -14,7 +14,9 @@ gs_boundaries(design)
 A data frame with one row per analysis and columns \code{analysis},
 \code{information_rate}, \code{n_cumulative}, \code{efficacy_z}, \code{futility_z} and
 \code{cumulative_alpha_spent}. \code{futility_z} is \code{NA} where no futility bound
-applies, including at the final analysis, where rpact reports none.
+applies: at the final analysis, where rpact reports none, at every
+analysis of an efficacy-only design, and at any analysis where rpact
+returns its no-futility floor of -6.
 }
 \description{
 Tabulate the monitoring boundaries of a design

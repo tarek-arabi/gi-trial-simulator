@@ -61,6 +61,105 @@ test_that("a pure-noise model has a cross-validated AUC near 0.5", {
   expect_lte(fit$auc_cv, fit$auc_apparent)
 })
 
+test_that("fit_prognostic refuses to report a CV AUC it cannot compute", {
+  # Reproduction of the defect: 120 patients at a 2 percent event rate leaves 2
+  # events. With unstratified folds both could land in one fold, so that fold's
+  # model is fitted to an outcome with no variation and its out-of-fold scores
+  # are not predictions. The old code pooled them anyway and reported
+  # auc_cv = 0.20 against auc_apparent = 0.96, converged = TRUE, silently.
+  spec <- cohort_spec(list(
+    covariate_spec("x1", "normal"),
+    covariate_spec("x2", "normal")
+  ))
+  train <- simulate_cohort(spec, n = 120, seed = 1)
+  coefs <- c(x1 = 1, x2 = 0.8)
+  y <- outcome_model(train, coefs, calibrate_intercept(train, coefs, 0.02), seed = 1)
+  expect_lt(sum(y$y), 5L)
+
+  expect_warning(
+    fit <- fit_prognostic(train, y, folds = 5, seed = 1),
+    "cross-validation was skipped"
+  )
+  expect_true(is.na(fit$auc_cv))
+  expect_false(fit$cv_performed)
+  expect_true(all(is.na(fit$oof_score)))
+  # The apparent AUC is still reported; only the honest one is withheld.
+  expect_false(is.na(fit$auc_apparent))
+  # The warning has to say what went wrong, not just that something did.
+  expect_warning(fit_prognostic(train, y, folds = 5, seed = 1), "event\\(s\\)")
+  expect_output(print(fit), "NA \\(too few events to fold\\)")
+})
+
+test_that("fit_prognostic stratifies folds so every fold holds both classes", {
+  # Rare enough that unstratified folds would routinely leave a fold without an
+  # event, but not so rare that cross-validation has to be abandoned.
+  spec <- cohort_spec(list(
+    covariate_spec("x1", "normal"),
+    covariate_spec("x2", "normal")
+  ))
+  train <- simulate_cohort(spec, n = 400, seed = 71)
+  coefs <- c(x1 = 1, x2 = 0.8)
+  y <- outcome_model(train, coefs, calibrate_intercept(train, coefs, 0.03), seed = 71)
+  yint <- as.integer(y$y)
+  expect_equal(sum(yint), 10L)
+
+  empty_fold <- function(id) {
+    any(tabulate(id[yint == 1L], 5L) == 0L) || any(tabulate(id[yint == 0L], 5L) == 0L)
+  }
+
+  # Fold seed 6 is one of the many at which the unstratified draw the old code
+  # used leaves a fold with no events at all. Asserting on `fold_id`, the
+  # assignment the fit actually used, is what makes this catch a regression to
+  # unstratified sampling; asserting on the helper alone would not.
+  set.seed(6L)
+  expect_true(empty_fold(sample(rep_len(seq_len(5L), length(yint)))))
+
+  fit <- expect_silent(fit_prognostic(train, y, folds = 5, seed = 6))
+  expect_true(fit$cv_performed)
+  expect_false(is.na(fit$auc_cv))
+  expect_true(all(is.finite(fit$oof_score)))
+  expect_false(empty_fold(fit$fold_id))
+  expect_equal(sort(unique(fit$fold_id)), 1:5)
+
+  # The guarantee is not "works on this seed", it is "works on every seed", so
+  # assert it across 200 of them: stratified assignment must never leave a fold
+  # without an event, while the unstratified draw does so on roughly half of
+  # them. A run of 200 in which the unstratified draw never failed would itself
+  # be evidence that the two schemes had become the same thing.
+  strat_bad <- 0L
+  naive_bad <- 0L
+  for (s in seq_len(200)) {
+    set.seed(s)
+    strat_bad <- strat_bad + empty_fold(stratified_folds(yint, 5L))
+    set.seed(s)
+    naive_bad <- naive_bad + empty_fold(sample(rep_len(seq_len(5L), length(yint))))
+  }
+  expect_equal(strat_bad, 0L)
+  expect_gt(naive_bad, 10L)
+})
+
+test_that("fit_prognostic reports separation instead of calling it convergence", {
+  # A covariate that predicts the outcome perfectly except for one patient.
+  # glm walks the coefficient out along a flat ridge, stops when the deviance
+  # stops moving, and sets model$converged to TRUE.
+  d <- data.frame(z = c(rep(1, 20), rep(0, 60)), w = rep(c(-1, 1), 40))
+  yz <- c(rep(1L, 20), rep(c(0L, 1L), c(45, 15)))
+  expect_warning(fit <- fit_prognostic(d, yz, folds = 3, seed = 1), "separation")
+  expect_true(isTRUE(fit$model$converged))
+  expect_true("z" %in% fit$separation)
+  expect_false(fit$converged)
+  expect_gt(abs(stats::coef(fit$model)[["z"]]), 8)
+  expect_output(print(fit), "separation")
+
+  # A strong but estimable signal must not be flagged.
+  set.seed(72)
+  ok <- data.frame(v = stats::rnorm(400))
+  yok <- stats::rbinom(400, 1, stats::plogis(-0.5 + 1.5 * ok$v))
+  clean <- expect_silent(fit_prognostic(ok, yok, folds = 5, seed = 72))
+  expect_length(clean$separation, 0L)
+  expect_true(clean$converged)
+})
+
 test_that("fit_prognostic honours an explicit one-sided formula", {
   spec <- prognostic_spec()
   train <- simulate_cohort(spec, n = 800, seed = 53)
@@ -139,6 +238,60 @@ test_that("analyse_with_prognostic validates its arguments and directions", {
   expect_equal(lo$adjusted$p_one_sided + hi$adjusted$p_one_sided, 1)
   expect_equal(lo$adjusted$estimate, hi$adjusted$estimate)
   expect_output(print(lo), "gi_adjusted_analysis")
+})
+
+test_that("analyse_with_prognostic reports separation rather than a fake estimate", {
+  # Reproduction of the defect: every treated patient has the event and no
+  # control does. The maximum likelihood estimate does not exist, but glm stops
+  # on the flat ridge and reports convergence, so the old code returned
+  # estimate = 53.13 with se = 92293.68 and converged = TRUE.
+  y <- c(rep(1L, 30), rep(0L, 30))
+  arm <- c(rep(1L, 30), rep(0L, 30))
+  set.seed(2)
+  score <- stats::rnorm(60)
+
+  expect_warning(res <- analyse_with_prognostic(y, arm, score), "separation")
+  expect_false(res$converged)
+  expect_true("arm" %in% res$separation)
+  # The underlying glm still claims success; the guard is what catches it.
+  expect_gt(abs(res$adjusted$estimate), 8)
+  expect_gt(res$adjusted$se, 25)
+  expect_output(print(res), "separation")
+
+  # A well-behaved trial of the same size must not be flagged.
+  set.seed(73)
+  y2 <- stats::rbinom(60, 1, 0.4)
+  clean <- expect_silent(analyse_with_prognostic(y2, arm, score))
+  expect_true(clean$converged)
+  expect_length(clean$separation, 0L)
+  expect_length(clean$rank_deficient, 0L)
+})
+
+test_that("analyse_with_prognostic surfaces a rank deficient design", {
+  # Reproduction of the defect: a score that is a linear function of arm. glm
+  # drops it, every g-computation quantity becomes NA, and the old code returned
+  # se_ratio = NA with converged = TRUE and no warning at all.
+  set.seed(3)
+  n <- 200
+  arm <- rep(0:1, each = 100)
+  y <- stats::rbinom(n, 1, 0.3)
+  score <- 2 * arm
+
+  expect_warning(res <- analyse_with_prognostic(y, arm, score), "rank deficient")
+  expect_equal(res$rank_deficient, "score")
+  expect_false(res$converged)
+  expect_true(is.na(res$se_ratio))
+  expect_true(is.na(res$adjusted$rd))
+  expect_true(is.na(res$adjusted$rd_se))
+  expect_output(print(res), "rank deficient")
+
+  # Nudging the score off the arm restores an estimable model.
+  set.seed(74)
+  ok <- 2 * arm + stats::rnorm(n)
+  fine <- expect_silent(analyse_with_prognostic(y, arm, ok))
+  expect_length(fine$rank_deficient, 0L)
+  expect_true(fine$converged)
+  expect_false(is.na(fine$se_ratio))
 })
 
 test_that("a prognostic score shrinks the risk difference SE and noise does not", {

@@ -15,7 +15,10 @@ to the difference in the event rates the data were generated from.}
 }
 \value{
 A data frame with one row per performance measure and columns
-\code{measure}, \code{estimate}, \code{mcse} and \code{definition}.
+\code{measure}, \code{estimate}, \code{mcse} and \code{definition}. Rows are
+\code{rejection_rate}, \code{bias}, \code{empirical_se}, \code{mse}, \code{coverage},
+\code{mean_sample_size} and \code{degenerate_rate}, plus \code{early_stopping_rate} for a
+group-sequential simulation.
 }
 \description{
 Summarises a \code{gi_simulation} into the performance measures an ADEMP-compliant
@@ -33,6 +36,14 @@ rate, on its natural scale. For a group-sequential simulation the estimate is
 the one available at the stopping analysis, so the bias row reports the
 well-known bias of an estimate taken at a boundary crossing rather than an
 error in the simulation.
+
+A \code{degenerate_rate} row reports the replications whose score statistic or
+confidence interval was undefined because an arm had no events or every
+patient had one. Those replications are carried through the other measures
+as non-rejections with a zero-width interval, which is what a real analysis
+would face, so the row exists to make their weight visible: a rejection rate
+resting on a large degenerate fraction is describing an infeasible trial, not
+a design.
 }
 \examples{
 sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)

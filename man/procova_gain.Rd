@@ -49,7 +49,9 @@ otherwise.}
 data-generating model.}
 
 \item{folds}{Cross-validation folds used when reporting the prognostic
-model's honest discrimination.}
+model's honest discrimination. If the training cohort has fewer than
+\code{folds} events, \code{\link[=fit_prognostic]{fit_prognostic()}} warns and the reported CV AUC is \code{NA};
+the simulation itself is unaffected.}
 
 \item{calibrate_n}{Size of the reference cohort used to solve for the
 intercepts that reproduce the scenario's marginal event rates.}
@@ -66,15 +68,48 @@ versions carry an \code{rd_} prefix). Every one of those carries a matching
 standard errors of both estimators on both scales, the achieved marginal
 event rates, the count of non-converged replicates, and the full
 \code{replicates} matrix for further ADEMP summaries.
+
+\code{se_ratio}, \code{n_reduction}, \code{se_ratio_logor} and \code{information_ratio} are
+upper bounds on the efficiency gain, obtained with a prognostic model that
+is correctly specified by construction; see the description above for why a
+deployed model does less well. \code{n_nonconverged} counts replicates whose fit
+failed to converge, showed separation, or had a rank deficient design
+matrix.
 }
 \description{
 Simulates the same trial twice, unadjusted and adjusted for a frozen
-prognostic score, on identical simulated data, and reports what the
-adjustment buys. The prognostic model is trained once on \code{train_n} simulated
-historical control-arm patients and then held fixed across every replicate,
-which is how PROCOVA is actually deployed.
+prognostic score, on identical simulated data, and reports the difference.
+The prognostic model is trained once on \code{train_n} simulated historical
+control-arm patients and then held fixed across every replicate, which
+reproduces the freezing step PROCOVA requires.
 }
 \details{
+\strong{Every efficiency number this function reports is an upper bound, not the
+gain a real trial should expect.} The prognostic model is fitted with
+\code{stats::reformulate(names(coefs))}, that is, on exactly the covariates that
+generate the outcome, through the same link, with nothing omitted and nothing
+spurious added. It is correctly specified by construction and differs from
+the true outcome model only by estimation error on \code{train_n} patients. That
+is the best case, not the deployed case.
+
+A deployed prognostic model is not in that position. It is trained on
+historical patients from a different time, place and standard of care; the
+covariates it can measure are proxies for the ones that actually drive the
+outcome; and its functional form is chosen rather than known. It is
+misspecified relative to the trial's outcome model, so its score is less
+prognostic and the variance reduction it achieves is smaller. Nothing here
+estimates how much smaller, because that depends on the degree of
+misspecification, which this simulation does not model: \code{coefs} fixes the
+true outcome model and the prognostic model together, so the two cannot be
+made to disagree through this interface. To study a misspecified score,
+build the study by hand from \code{\link[=fit_prognostic]{fit_prognostic()}} and
+\code{\link[=analyse_with_prognostic]{analyse_with_prognostic()}}, giving the prognostic fit a formula that omits
+or mismeasures a true driver.
+
+Read \code{se_ratio} and \code{n_reduction} as the ceiling a perfectly specified score
+could reach, report them with that qualifier attached, and plan against a
+more conservative figure.
+
 Read the efficiency measures carefully, because for a binary outcome two of
 them point in opposite directions and only one comparison is legitimate.
 
@@ -94,11 +129,26 @@ it; the estimate rises faster, which is why power still improves. Quoting
 this number as evidence that adjustment hurts would be comparing the
 precision of two different estimands.
 
-\code{information_ratio} is the same efficiency gain read off the log odds ratio
-Wald test instead: the squared ratio of the mean test statistics under the
-alternative, \code{(mean(z_adjusted) / mean(z_unadjusted))^2}. Required sample size
-scales inversely with squared noncentrality, so it should agree with
-\code{1 / se_ratio}, and the two are reported together as a cross-check.
+\code{information_ratio} reads an efficiency gain off the log odds ratio Wald test
+instead: the squared ratio of the mean test statistics under the alternative,
+\code{(mean(z_adjusted) / mean(z_unadjusted))^2}. Required sample size scales
+inversely with squared noncentrality, so this is a sample size ratio too.
+
+It is tempting to read \code{information_ratio} against \code{1 / se_ratio} as a
+cross-check, and the print method shows them side by side, but the agreement
+is conditional and the condition is easy to violate. \code{information_ratio} is a
+log odds ratio quantity while \code{se_ratio} is a risk difference quantity, and
+the two estimands carry the same efficiency only in the limit of a vanishing
+treatment effect, where non-collapsibility is a second-order term. Under a
+local alternative they match: at the log odds ratio of about -0.53 the
+package tests use, 4000 replicates put the gap at roughly 2 Monte Carlo
+standard errors, which is noise. Away from it they do not: at a log odds
+ratio near -1.4 \code{information_ratio} sits about 5 percent below \code{1 / se_ratio}
+and at -2.2 about 10 percent below, in both cases tens of Monte Carlo
+standard errors out, systematically and reproducibly. So treat a gap as
+informative only when the treatment effect is small. At a large effect a gap
+is the expected behaviour of two different estimands and says nothing about
+whether either number is right.
 }
 \examples{
 spec <- cohort_spec(list(

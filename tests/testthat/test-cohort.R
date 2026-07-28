@@ -64,6 +64,47 @@ test_that("cohort_spec reorders a named correlation matrix to the covariate orde
   expect_error(cohort_spec(cvs, bad), "dimnames do not match")
 })
 
+test_that("cohort_spec refuses a correlation matrix with only one set of dimnames", {
+  cvs <- list(
+    covariate_spec("a", "normal"),
+    covariate_spec("b", "normal"),
+    covariate_spec("c", "normal")
+  )
+  m <- matrix(
+    c(
+      1.0, 0.5, 0.1,
+      0.5, 1.0, 0.2,
+      0.1, 0.2, 1.0
+    ),
+    nrow = 3, byrow = TRUE
+  )
+  # Names present on one dimension only, and in an order different from the
+  # covariates. Read positionally this says cor(a, b) = 0.5; read by the names
+  # supplied it says cor(a, b) = 0.2. Silently choosing the first is how the
+  # wrong correlations get applied to the wrong covariates.
+  rows_only <- m
+  rownames(rows_only) <- c("c", "b", "a")
+  expect_error(cohort_spec(cvs, rows_only), "rownames but no colnames")
+  expect_error(cohort_spec(cvs, rows_only), "silently pair covariates")
+
+  cols_only <- m
+  colnames(cols_only) <- c("c", "b", "a")
+  expect_error(cohort_spec(cvs, cols_only), "colnames but no rownames")
+
+  # Both name sets, in a scrambled order, must still be honoured. cor(a, b) is
+  # the entry of `m` at row "a", column "b", which is m[3, 2] = 0.2, not the
+  # positional m[1, 2] = 0.5.
+  both <- m
+  dimnames(both) <- list(c("c", "b", "a"), c("c", "b", "a"))
+  spec <- cohort_spec(cvs, both)
+  expect_equal(spec$correlation["a", "b"], 0.2)
+  expect_equal(spec$correlation["b", "c"], 0.5)
+  expect_equal(spec$correlation["a", "c"], 0.1)
+
+  # No names at all is still read positionally, unchanged.
+  expect_equal(unname(cohort_spec(cvs, m)$correlation), m)
+})
+
 test_that("simulate_cohort reproduces each marginal distribution", {
   spec <- cohort_spec(list(
     covariate_spec("norm", "normal", mean = 68, sd = 13),
@@ -127,7 +168,53 @@ test_that("cohort_correlation_check reports the attenuation for binary marginals
   # function must say so rather than reporting the target back.
   expect_lt(chk$realised, 0.45)
   expect_gt(chk$attenuation, 0.15)
-  expect_equal(chk$attenuation, chk$target - chk$realised)
+  # Bound the attenuation from the other side too. The copula weakens the
+  # association, it does not destroy it, so a function that reported zero or a
+  # negative realised correlation would also be wrong.
+  expect_gt(chk$realised, 0.25)
+  expect_lt(chk$attenuation, 0.4)
+
+  # `realised` and `attenuation` are checked against an independent
+  # recomputation from the same spec, seed and n rather than against the
+  # definition the function itself uses. This fails if the columns are swapped,
+  # if the attenuation sign is flipped, if the wrong pair is reported, or if the
+  # check silently simulates something other than what it says it does.
+  sim <- simulate_cohort(spec, n = 30000, seed = 4)
+  observed_r <- stats::cor(sim$x, sim$z)
+  expect_equal(chk$realised, observed_r)
+  expect_equal(chk$attenuation, 0.6 - observed_r)
+  expect_equal(chk$var1, "x")
+  expect_equal(chk$var2, "z")
+})
+
+test_that("cohort_correlation_check names a covariate that came out constant", {
+  spec <- cohort_spec(
+    list(
+      covariate_spec("x", "normal"),
+      covariate_spec("almost_never", "binary", prob = 1e-6)
+    ),
+    correlation = matrix(c(1, 0.3, 0.3, 1), nrow = 2)
+  )
+  # stats::cor on a zero-variance column returns NA behind base R's bare
+  # "the standard deviation is zero" warning, which names nothing. The check
+  # must identify the offending covariate instead.
+  expect_error(
+    cohort_correlation_check(spec, n = 1000, seed = 1),
+    "'almost_never'"
+  )
+  expect_error(
+    cohort_correlation_check(spec, n = 1000, seed = 1),
+    "single constant value"
+  )
+  # A covariate that does vary is not caught by the guard.
+  fine <- cohort_spec(
+    list(
+      covariate_spec("x", "normal"),
+      covariate_spec("z", "binary", prob = 0.2)
+    ),
+    correlation = matrix(c(1, 0.3, 0.3, 1), nrow = 2)
+  )
+  expect_s3_class(cohort_correlation_check(fine, n = 1000, seed = 1), "data.frame")
 })
 
 test_that("cohort_correlation_check needs at least two covariates", {

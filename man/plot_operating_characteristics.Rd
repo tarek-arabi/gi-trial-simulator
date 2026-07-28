@@ -14,8 +14,8 @@ names are used as the design labels; unnamed elements fall back to their
 \value{
 A ggplot object: designs on the vertical axis, measure value on the
 horizontal axis, panelled by measure, with the \code{gi_theme()} styling and no
-plot title. Analytic and simulated designs are distinguished by colour when
-both are present.
+plot title. Analytic target power and simulated achieved power occupy
+separate panels and are also separated by colour and point shape.
 }
 \description{
 Places power, maximum total sample size and expected total sample size for a
@@ -23,17 +23,31 @@ set of designs on a common dot chart, one panel per measure so the different
 units never share an axis.
 }
 \details{
-A \code{bayesian_adaptive} design has no analytic target power: its \code{power} field
-is \code{NA} and the achieved power sits in \code{detail}. This function falls back to
-\code{detail$simulated_power}, \code{detail$empirical_power} or \code{detail$power}, and
-marks such designs as simulated. Expected sample size is the value under the
-alternative, read from the first of \code{detail$expected_n},
-\code{detail$expected_sample_size}, \code{detail$expected_n_total},
-\code{detail$expected_n_alt}, \code{detail$expected_n_h1}, \code{detail$en} or \code{detail$asn}
-that the design carries. A \code{fixed} design reporting none is credited with its
-full sample size, since it has no interim analysis at which to stop early;
-any other design reporting none simply has no point in that panel, and the
-panel is dropped if no design reports one.
+Power means two different things depending on how a design was evaluated, and
+the two are never put on one axis. For a design solved in closed form the
+\code{power} field is the target the sample size was solved for, a design input,
+and it is drawn in a panel labelled \verb{Power (analytic target)}. For a design
+evaluated by simulation, which is what \code{\link[=design_bayesian]{design_bayesian()}} returns and what
+any design carrying a missing \code{power} is treated as, the number is the power
+the simulation achieved, an output, and it is drawn in a separate panel
+labelled \code{Power (simulated)}. Colour and point shape repeat the distinction
+so it survives a greyscale reading of the panel strips.
+
+Power is read from the design's own \code{power} field whenever that is a single
+non-missing number, which covers every design this package builds, including
+the simulated power \code{\link[=design_bayesian]{design_bayesian()}} reports. A design that leaves \code{power}
+missing, as a hand-assembled or third-party design may, falls back to the
+first number among \code{detail$simulated_power}, \code{detail$empirical_power},
+\code{detail$power} and \code{detail$prob_reject}, and is marked as simulated.
+
+Expected sample size is the value under the alternative, read from the first
+of \code{detail$expected_n}, \code{detail$expected_sample_size},
+\code{detail$expected_n_total}, \code{detail$expected_n_alt}, \code{detail$expected_n_h1},
+\code{detail$en}, \code{detail$asn} or \code{detail$ess} that the design carries. A \code{fixed}
+design reporting none is credited with its full sample size, since it has no
+interim analysis at which to stop early; any other design reporting none
+simply has no point in that panel, and the panel is dropped if no design
+reports one.
 }
 \examples{
 if (requireNamespace("ggplot2", quietly = TRUE)) {

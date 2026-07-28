@@ -136,7 +136,9 @@ emulator_profile_fit <- function(lengthscale, nugget, xs, ys, kernel) {
 #' @param x Design inputs: a numeric matrix with one row per simulated design
 #'   point and one column per input (for example control rate, effect size,
 #'   sample size per arm). A data frame or, for a single input, a plain numeric
-#'   vector is also accepted.
+#'   vector is also accepted. At least `3 * (d + 2)` design points are required
+#'   for `d` inputs, three per hyperparameter, and about `10 * d` is the usual
+#'   working rule of thumb (Loeppky, Sacks and Welch 2009).
 #' @param y Numeric vector of simulator output at those design points, one value
 #'   per row of `x` (for example simulated power).
 #' @param kernel Correlation function, either `"matern52"` (the default, twice
@@ -157,7 +159,9 @@ emulator_profile_fit <- function(lengthscale, nugget, xs, ys, kernel) {
 #'   profile log marginal likelihood at the fit), `estimated` (which
 #'   hyperparameters were estimated rather than supplied), the standardisation
 #'   constants `x_center`, `x_scale`, `y_center`, `y_scale`, and the internal
-#'   quantities `x_scaled`, `chol` and `alpha` used by the predict method.
+#'   quantities `x_scaled`, `lengthscale_scaled` (the lengthscales on the
+#'   standardised input scale, the scale the search box applies to), `chol` and
+#'   `alpha` used by the predict method.
 #'
 #' @note An emulator interpolates simulation output, it does not replace
 #'   simulation. Any operating characteristic quoted in a paper must come from
@@ -168,6 +172,21 @@ emulator_profile_fit <- function(lengthscale, nugget, xs, ys, kernel) {
 #'   be trusted in the first place. The process is unconstrained, so a bounded
 #'   output such as power can be emulated as slightly above 1 or below 0 near
 #'   the boundary; emulate `qlogis(power)` and transform back if that matters.
+#'
+#'   Estimation is box constrained: on the standardised input scale the
+#'   lengthscales are searched over `[1e-2, 1e3]` and the nugget over
+#'   `[1e-10, 1]`. When the likelihood is still rising at one of those limits the
+#'   optimiser stops there and the value reported is the edge of the search
+#'   rather than an estimate, which is warned about, naming the hyperparameter
+#'   and the limit. A nugget at its upper limit or a lengthscale at its lower
+#'   limit means the output is dominated by noise and the emulator is fitting
+#'   essentially nothing; a lengthscale at its upper limit means that input is
+#'   inert across the design. A nugget resting at its lower limit is not warned
+#'   about, because that is the interpolating fit deterministic output should
+#'   give. A separate warning fires, for supplied as well as estimated
+#'   lengthscales, when the fitted correlation between the closest pair of design
+#'   points falls below 0.05, which leaves the posterior mean flat at the mean of
+#'   `y` between design points.
 #'
 #' @seealso [predict.gi_emulator()], [emulator_loo()], [suggest_next_point()]
 #' @examples
@@ -199,11 +218,21 @@ fit_emulator <- function(x, y, kernel = "matern52", nugget = NULL, lengthscale =
   if (!all(is.finite(y))) stop("`y` must contain only finite values.", call. = FALSE)
   n <- nrow(x)
   d <- ncol(x)
-  if (n < d + 2L) {
+  # The fit estimates d lengthscales, a nugget and a signal variance, so n = d + 2
+  # leaves nothing at all to estimate them with: the optimiser then walks to the
+  # edge of its search box and returns a flat posterior mean. Three runs per
+  # hyperparameter is the floor enforced here, and it is only a floor. About ten
+  # runs per input is the working rule of thumb for a computer experiment
+  # (Loeppky, Sacks and Welch 2009), and a design near this floor should be
+  # checked with emulator_loo() before it is trusted.
+  n_min <- 3L * (d + 2L)
+  if (n < n_min) {
     stop(
       "`x` has ", n, " design points for ", d,
-      " inputs, which is too few to fit an emulator. Simulate at least ",
-      d + 2L, " points.",
+      " inputs, which is too few to fit an emulator: ", d + 2L,
+      " hyperparameters (one lengthscale per input, a nugget and a signal ",
+      "variance) cannot be estimated from ", n, " runs. Simulate at least ",
+      n_min, " points, and preferably about ", 10L * d, ".",
       call. = FALSE
     )
   }
@@ -249,7 +278,10 @@ fit_emulator <- function(x, y, kernel = "matern52", nugget = NULL, lengthscale =
 
   free_ls <- is.null(ls_scaled)
   free_nug <- is.null(nugget)
-  ls_bounds <- log(c(1e-2, 1e3))
+  # Search box for the hyperparameters, on the log scale and, for the
+  # lengthscales, on the standardised input scale.
+  ls_bounds_original <- c(1e-2, 1e3)
+  ls_bounds <- log(ls_bounds_original)
   nug_bounds <- log(c(1e-10, 1))
 
   if (free_ls || free_nug) {
@@ -292,6 +324,48 @@ fit_emulator <- function(x, y, kernel = "matern52", nugget = NULL, lengthscale =
     p <- unpack(best$par)
     ls_scaled <- p$lengthscale
     nugget_used <- p$nugget
+
+    # The search is box constrained on the log scale. When the maximiser lies
+    # outside the box the optimiser stops on its edge and the value returned is
+    # the limit of the search, not an estimate. That has to be said out loud: it
+    # is what noise dominated simulator output looks like from the inside.
+    on_bound <- function(value, bound) abs(value - bound) <= 1e-8 * max(1, abs(bound))
+    hit <- character(0)
+    if (free_ls) {
+      for (j in seq_len(d)) {
+        if (on_bound(best$par[j], ls_bounds[1])) {
+          hit <- c(hit, paste0(
+            "the lengthscale for input '", colnames(x)[j], "' at its lower limit (",
+            format(ls_bounds_original[1] * x_scale[j], digits = 3), ")"
+          ))
+        } else if (on_bound(best$par[j], ls_bounds[2])) {
+          hit <- c(hit, paste0(
+            "the lengthscale for input '", colnames(x)[j], "' at its upper limit (",
+            format(ls_bounds_original[2] * x_scale[j], digits = 3), ")"
+          ))
+        }
+      }
+    }
+    # A nugget at its lower limit is the interpolating fit that deterministic
+    # simulator output should give, so it is not reported as a boundary problem.
+    if (free_nug && on_bound(best$par[length(best$par)], nug_bounds[2])) {
+      hit <- c(hit, "the nugget at its upper limit (1)")
+    }
+    if (length(hit) > 0L) {
+      warning(
+        "Hyperparameter estimation stopped on the boundary of its search box: ",
+        paste(hit, collapse = ", "),
+        ". The likelihood is still rising at the limit, so these are the edges ",
+        "of the search rather than estimates. A nugget at its upper limit, or a ",
+        "lengthscale at its lower limit, means the fitted process is almost all ",
+        "noise and the emulator is interpolating essentially nothing, which is ",
+        "what happens when the simulator output carries less signal than its ",
+        "Monte Carlo noise. A lengthscale at its upper limit means that input is ",
+        "effectively inert across this design. Check the fit with emulator_loo() ",
+        "before using it.",
+        call. = FALSE
+      )
+    }
   } else {
     nugget_used <- nugget
   }
@@ -310,6 +384,27 @@ fit_emulator <- function(x, y, kernel = "matern52", nugget = NULL, lengthscale =
       format(nugget_used, digits = 3), "; raised it to ",
       format(fitted$nugget, digits = 3),
       " to complete the Cholesky factorisation.",
+      call. = FALSE
+    )
+  }
+
+  # A lengthscale short enough to leave even the closest pair of design points
+  # uncorrelated produces a fit that looks successful and has learned nothing:
+  # the posterior mean drops back to the mean of `y` the moment you step off a
+  # design point. This catches a supplied lengthscale as well as an estimated
+  # one, so it is checked here rather than inside the optimiser branch.
+  corr_check <- emulator_correlation(xs, xs, ls_scaled, kernel)
+  diag(corr_check) <- NA_real_
+  max_corr <- max(corr_check, na.rm = TRUE)
+  if (max_corr < 0.05) {
+    warning(
+      "The fitted lengthscale(s) leave even the closest pair of design points ",
+      "essentially uncorrelated (largest correlation between two design points ",
+      "is ", format(max_corr, digits = 3),
+      "). This emulator is degenerate: its posterior mean falls back to the mean ",
+      "of `y` away from the design points and its predictive interval is the ",
+      "prior one. Simulate design points closer together, or check that `y` ",
+      "carries signal above its Monte Carlo noise.",
       call. = FALSE
     )
   }
@@ -415,8 +510,9 @@ predict.gi_emulator <- function(object, newdata, include_nugget = FALSE, ...) {
 #' Leave one out diagnostics for an emulator
 #'
 #' Leave one out cross validation using the exact Gaussian process identity
-#' (Rasmussen and Williams 2006, equation 5.12), so no refitting loop is needed.
-#' Two things matter: the root mean squared error, which says whether the
+#' (Rasmussen and Williams 2006, equation 5.12) together with the partitioned
+#' inverse identity for the fold's signal variance, so every fold is exact and no
+#' refitting loop is needed. Two things matter: the root mean squared error, which says whether the
 #' emulator interpolates well, and the proportion of held out points falling
 #' inside their own 95 percent predictive interval, which says whether its
 #' uncertainty is honest. A well calibrated emulator has coverage near 0.95. Far
@@ -431,9 +527,15 @@ predict.gi_emulator <- function(object, newdata, include_nugget = FALSE, ...) {
 #'   and `sd`, the interval `lower` and `upper`, and the standardised residual
 #'   `z`.
 #'
-#' @note Hyperparameters are estimated once on the full design and are not re
-#'   estimated within each fold, which is the usual practice for emulators and
-#'   makes these diagnostics mildly optimistic.
+#' @note What is re estimated per fold, and what is not. The correlation
+#'   lengthscales and the nugget are estimated once on the full design and are
+#'   held fixed across folds, which is the usual practice for emulators and
+#'   leaves these diagnostics mildly optimistic. Everything that depends on the
+#'   output values is redone within each fold: the centring, the scaling and the
+#'   profiled signal variance are all recomputed from the retained points alone,
+#'   so a held out value never contributes to its own prediction. The fold
+#'   scaling cancels between the standardised prediction and the profiled
+#'   variance, which is why only the centring appears explicitly in the code.
 #'
 #' @examples
 #' x <- cbind(rep(seq(0, 1, length.out = 6), each = 6),
@@ -446,15 +548,33 @@ emulator_loo <- function(fit) {
   if (!inherits(fit, "gi_emulator")) {
     stop("`fit` must be a gi_emulator, as returned by fit_emulator().", call. = FALSE)
   }
-  a_inv <- chol2inv(fit$chol)
-  ys <- (fit$y - fit$y_center) / fit$y_scale
-  diag_inv <- diag(a_inv)
-  mu_s <- ys - fit$alpha / diag_inv
-  var_s <- fit$sigma2 / diag_inv
-  var_s[var_s < 0] <- 0
+  n <- fit$n
+  y <- fit$y
+  # b is the inverse of the correlation matrix plus nugget. It depends on the
+  # design and the hyperparameters only, never on the output values, so a held
+  # out y enters nothing below except through the retained points of its fold.
+  b <- chol2inv(fit$chol)
+  b_diag <- diag(b)
+  b_y <- as.vector(b %*% y)
+  b_one <- rowSums(b)
+  y_b_y <- sum(y * b_y)
+  one_b_y <- sum(b_y)
+  one_b_one <- sum(b_one)
 
-  mean_out <- fit$y_center + fit$y_scale * mu_s
-  sd_out <- fit$y_scale * sqrt(var_s)
+  # Fold i is centred on the mean of the retained points, not on the mean of all
+  # of them, and its signal variance is profiled from the retained points too.
+  # Writing v = y - centre_i, the leave one out identity of Rasmussen and
+  # Williams applied to v gives the held out mean, and the partitioned inverse
+  # identity v'A[-i,-i]^-1 v = v'bv - (bv)_i^2 / b_ii gives the profiled variance
+  # of the retained points, both without forming a single sub matrix.
+  centre <- (sum(y) - y) / (n - 1)
+  g <- b_y - centre * b_one
+  v_b_v <- y_b_y - 2 * centre * one_b_y + centre^2 * one_b_one
+  sigma2_fold <- (v_b_v - g^2 / b_diag) / (n - 1)
+  sigma2_fold[sigma2_fold < 0] <- 0
+
+  mean_out <- y - g / b_diag
+  sd_out <- sqrt(sigma2_fold / b_diag)
   lower <- mean_out - 1.959964 * sd_out
   upper <- mean_out + 1.959964 * sd_out
   resid <- fit$y - mean_out
@@ -494,9 +614,11 @@ emulator_loo <- function(fit) {
 #'   lower and upper limit, or a length two vector for a one input emulator.
 #' @param n_candidates Number of random candidate points to screen. Larger is
 #'   more thorough and costs nothing but a matrix multiply.
-#' @param seed Integer seed for the candidate draw, recorded in the return value
-#'   so the suggestion is reproducible. The ambient random number state is
-#'   restored on exit.
+#' @param seed Seed for the candidate draw, recorded in the return value so the
+#'   suggestion is reproducible. It must be a whole number: [set.seed()]
+#'   truncates towards zero, so a fractional seed would be recorded without being
+#'   the seed that produced the result, and is rejected rather than truncated
+#'   silently. The ambient random number state is restored on exit.
 #'
 #' @return A list with `point` (named numeric vector, the suggested design
 #'   point), `sd` (posterior standard deviation there), `mean` (posterior mean
@@ -543,8 +665,14 @@ suggest_next_point <- function(fit, bounds, n_candidates = 2000, seed = 1) {
     stop("`n_candidates` must be a single positive number.", call. = FALSE)
   }
   n_candidates <- as.integer(n_candidates)
-  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
-    stop("`seed` must be a single finite number.", call. = FALSE)
+  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed) ||
+    seed != trunc(seed)) {
+    stop(
+      "`seed` must be a single finite whole number. set.seed() truncates ",
+      "towards zero, so a fractional seed would be recorded here without being ",
+      "the seed that produced the result.",
+      call. = FALSE
+    )
   }
 
   cand <- emulator_with_seed(seed, {

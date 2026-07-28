@@ -21,7 +21,8 @@ its Monte Carlo standard error in \code{"rejection_rate_mcse"}.}
 factor and mapped to colour.}
 }
 \value{
-A ggplot object with one line and point series per group, the
+A ggplot object with one line and point series per group, a Monte
+Carlo band over the rows that report a usable standard error, the
 \code{gi_theme()} styling applied, axis labels taken from the column names, and
 no plot title.
 }
@@ -31,6 +32,16 @@ against one design input, optionally split by a second one. If \code{data} carri
 a Monte Carlo standard error for \code{y} in a column named \verb{<y>_mcse},
 \verb{mcse_<y>} or \code{mcse}, a plus or minus 1.96 MCSE band is drawn behind the
 line.
+}
+\details{
+Rows whose \code{x} or \code{y} value is missing or non-finite cannot be positioned, so
+they are dropped before plotting, as in \code{\link[=plot_boundaries]{plot_boundaries()}}; if that empties
+the data the function stops and names the column actually responsible. The
+band is treated separately: a row whose Monte Carlo standard error is missing
+or non-finite keeps its point and its line segment and simply carries no
+band there, and a column of entirely missing standard errors gives the same
+figure as no standard error column at all. A negative standard error is an
+error rather than a band drawn upside down.
 }
 \examples{
 if (requireNamespace("ggplot2", quietly = TRUE)) {

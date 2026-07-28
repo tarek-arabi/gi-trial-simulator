@@ -5,11 +5,21 @@
 \title{Cross-engine benchmark}
 \description{
 The claim this package makes is that it delegates its statistics rather
-than reimplementing them. The check on that claim is to compute the same
-group-sequential boundaries twice, once through \code{rpact} and once through
-\code{gsDesign}, and report the disagreement.
+than reimplementing them. This benchmark is one narrow check on that claim,
+and it is worth being exact about its scope. It computes the one-sided
+efficacy boundaries of a group-sequential design twice, once through
+\code{rpact} and once through \code{gsDesign}, and reports the disagreement. What it
+establishes is that the two engines agree on group-sequential efficacy
+boundaries for the four design families it covers (\code{OF}, \code{P}, \code{asOF},
+\code{asP}), at the analysis counts and information rates it is run at.
 }
 \details{
+What it does not establish: it says nothing about sample sizes, nothing
+about futility or beta-spending bounds, nothing about the Bayesian designs,
+and nothing about any quantity this package obtains by simulation. Boundary
+agreement is evidence that the boundaries are not homegrown. It is not
+evidence that anything else in the package is right.
+
 Classical O'Brien-Fleming and Pocock boundaries are defined by a single
 shape constraint and a root search, so the two engines should agree to
 within their root-finding tolerances. The alpha-spending variants (\code{asOF},

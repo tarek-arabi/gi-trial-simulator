@@ -22,8 +22,11 @@ simulate_fixed(
 
 \item{alpha}{One-sided type I error rate the test is judged against.}
 
-\item{seed}{Root seed. Either a single integer or a \code{.Random.seed} vector
-from \code{\link[=sim_seeds]{sim_seeds()}}. The caller's random number state is left unchanged.}
+\item{seed}{Root seed. Either a single whole number or a \code{.Random.seed}
+vector from \code{\link[=sim_seeds]{sim_seeds()}}. A single number also pins the generator kind to
+Mersenne-Twister with inversion and rejection sampling, so the recorded
+seed reproduces the recorded results whatever generator the calling session
+was using. The caller's random number state is left unchanged.}
 
 \item{workers}{Retained for interface symmetry with \code{\link[=simulate_grid]{simulate_grid()}}.
 Replication is vectorised rather than looped, so values above 1 have no
@@ -34,8 +37,11 @@ scenarios in \code{\link[=simulate_grid]{simulate_grid()}}.}
 An object of class \code{gi_simulation}: a list with \code{results} (a data
 frame with one row per replicate holding \code{z}, \code{p}, \code{reject},
 \code{risk_difference}, its standard error and 95 percent confidence limits,
-the two arm event counts and \code{n_total}), plus \code{design_type}, \code{n_per_arm},
-\code{n_total}, \code{nsim}, \code{alpha}, \code{seed}, \code{rates} and \code{scenario}.
+the two arm event counts, \code{n_total} and the logical \code{degenerate}), plus
+\code{design_type}, \code{n_per_arm}, \code{n_total}, \code{nsim}, \code{alpha}, \code{seed},
+\code{rng_kind} (the three generator kinds the replicates were drawn under),
+\code{rates}, \code{scenario} and \code{degenerate} (counts of the replicates with an
+undefined score statistic, a zero-width interval, and either).
 }
 \description{
 Draws event counts for both arms directly from the binomial distribution,
@@ -49,6 +55,31 @@ The statistic is the one \code{\link[stats:prop.test]{stats::prop.test()}} repor
 \code{correct = FALSE}; the package test suite pins it to \code{prop.test} on a sample
 of replicates rather than trusting the arithmetic.
 }
+\section{Agreement with rpact}{
+
+Simulated power reproduces the analytic power \code{\link[=power_at]{power_at()}} reads from rpact
+to within about half a percentage point, and is consistently slightly
+higher. Characterised at 200,000 replications across five scenarios spanning
+control rates from 0.066 to 0.50, the simulated rejection rate ran between
+0.003 and 0.007 above the rpact value, with the sign positive every time.
+Neither number is wrong: rpact evaluates a normal-approximation formula for
+two rates, while this function simulates the discrete binomial test that a
+real trial would perform, and the two differ by about that much. Treat a gap
+of this size and sign as expected, and a gap above 0.01, or one of the
+opposite sign, as a reason to investigate.
+}
+
+\section{Degenerate replicates}{
+
+A replicate in which nobody has an event, or everybody does, has no defined
+score statistic, and one in which both arm proportions sit on 0 or 1 has a
+zero-width confidence interval. Such replicates are recorded with \code{z = 0},
+which counts them as non-rejections, and are flagged in the \code{degenerate}
+column and counted in the \code{degenerate} element so that they are visible
+rather than silently absorbed into the rejection rate. They are common only
+at small sample sizes or very low event rates.
+}
+
 \examples{
 sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)
 sim <- simulate_fixed(sc, n_per_arm = 161, nsim = 500, seed = 1)

@@ -9,7 +9,10 @@ test_that("ademp_summary reports every measure with a Monte Carlo standard error
   expect_identical(names(out), c("measure", "estimate", "mcse", "definition"))
   expect_identical(
     out$measure,
-    c("rejection_rate", "bias", "empirical_se", "mse", "coverage", "mean_sample_size")
+    c(
+      "rejection_rate", "bias", "empirical_se", "mse", "coverage",
+      "mean_sample_size", "degenerate_rate"
+    )
   )
   expect_false(anyNA(out$estimate))
   expect_false(anyNA(out$mcse))
@@ -48,6 +51,38 @@ test_that("ademp_summary Monte Carlo standard errors follow Morris, White and Cr
 
   expect_equal(get_row("mean_sample_size")$estimate, 200)
   expect_equal(get_row("mean_sample_size")$mcse, 0)
+
+  degenerate <- sum(res$degenerate)
+  expect_equal(get_row("degenerate_rate")$estimate, degenerate / nsim)
+  expect_equal(
+    get_row("degenerate_rate")$mcse,
+    sqrt((degenerate / nsim) * (1 - degenerate / nsim) / nsim)
+  )
+})
+
+test_that("ademp_summary reports how many replicates were degenerate", {
+  rare <- scenario("ercp_acute_cholangitis", control_rate = 0.01, treatment_rate = 0.005)
+  sim <- simulate_fixed(rare, n_per_arm = 12, nsim = 500, seed = 2)
+  row <- ademp_summary(sim)[ademp_summary(sim)$measure == "degenerate_rate", ]
+
+  expect_gt(sim$degenerate$any, 0L)
+  expect_equal(row$estimate, sim$degenerate$any / sim$nsim)
+  # The count itself has to be readable, not just the proportion, and the
+  # definition has to say what happened to those replicates.
+  expect_match(row$definition, paste0(sim$degenerate$any, " of ", sim$nsim), fixed = TRUE)
+  expect_match(row$definition, "non-rejections")
+
+  # The rejection rate is computed over every replicate, degenerate ones
+  # included, which is what makes the count worth reporting alongside it.
+  full <- ademp_summary(sim)
+  expect_equal(full$estimate[1L], mean(sim$results$reject))
+
+  # A simulation carrying no record of degeneracy is refused rather than
+  # reported as having none.
+  stripped <- sim
+  stripped$degenerate <- NULL
+  stripped$results$degenerate <- NULL
+  expect_error(ademp_summary(stripped), "no record of degenerate replications")
 })
 
 test_that("ademp_summary recovers the truth it was generated from", {
@@ -130,6 +165,34 @@ test_that("nsim_required inverts the Monte Carlo standard error of a proportion"
   expect_error(nsim_required(0), "`target_mcse`")
   expect_error(nsim_required(-1), "`target_mcse`")
   expect_error(nsim_required(0.01, expected_proportion = 1.5), "`expected_proportion`")
+})
+
+test_that("nsim_required never returns an unusable replication count", {
+  # A degenerate proportion inverts to zero replications, which is never an
+  # answer anyone can run, so it is refused and the caller is pointed at 0.5.
+  expect_error(
+    nsim_required(0.005, expected_proportion = 0),
+    "strictly between 0 and 1"
+  )
+  expect_error(
+    nsim_required(0.005, expected_proportion = 1),
+    "strictly between 0 and 1"
+  )
+
+  # A target this fine needs more replications than R can hold in an integer,
+  # so it is refused instead of overflowing to NA.
+  expect_error(nsim_required(1e-12), "more than R can hold in an integer")
+  expect_error(nsim_required(1e-12), "2.5e\\+23")
+
+  # A Monte Carlo standard error cannot be formed from one replication.
+  expect_identical(nsim_required(0.5), 2L)
+  expect_identical(nsim_required(1, expected_proportion = 0.1), 2L)
+
+  for (p in c(0.001, 0.1, 0.5, 0.9, 0.999)) {
+    n <- nsim_required(0.005, expected_proportion = p)
+    expect_gte(n, 2L)
+    expect_lte(sqrt(p * (1 - p) / n), 0.005)
+  }
 })
 
 test_that("the achieved Monte Carlo standard error matches what nsim_required promised", {

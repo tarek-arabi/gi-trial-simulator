@@ -34,8 +34,11 @@ as a numeric vector, matching the form of \code{prior_draws}.}
 
 \item{nsim}{Number of simulated trials in the outer loop.}
 
-\item{seed}{Integer seed, recorded in the return value. The ambient random
-number state is restored on exit.}
+\item{seed}{Seed for the simulated trials, recorded in the return value. It
+must be a whole number: \code{\link[=set.seed]{set.seed()}} truncates towards zero, so a fractional
+seed would be recorded without being the seed that produced the result, and
+is rejected rather than truncated silently. The ambient random number state
+is restored on exit.}
 }
 \value{
 An object of class \code{gi_evsi}, a list with \code{evsi}, its Monte Carlo
@@ -65,11 +68,15 @@ under the same updated belief. EVSI is the average of those differences.
 Differencing within each simulated trial rather than differencing two
 separately estimated averages gives the same quantity, because the expected
 net benefit of a fixed decision under the posterior averages over datasets to
-its value under the prior. It is a much better estimator: the large common
-component of net benefit cancels within each simulated trial, which cuts the
-Monte Carlo error by roughly a factor of four in the examples here, and the
-estimate cannot come out negative. The unpaired form is reported under
-\code{detail$evsi_unpaired} and the two agree as \code{nsim} grows.
+its value under the prior. It is usually the better estimator: the large
+common component of net benefit cancels within each simulated trial, which
+cuts the Monte Carlo error by a factor of roughly two to three in the examples
+here, and the estimate cannot come out negative. That gain comes from most
+simulated trials leaving the decision unchanged, so it shrinks as the trial
+grows large enough to change the decision often; for a trial already close to
+perfect information the two estimators have similar precision, and the paired
+one can be slightly the noisier of the two. The unpaired form is reported
+under \code{detail$evsi_unpaired} and the two agree as \code{nsim} grows.
 
 The posterior is formed by likelihood reweighting of the supplied prior draws
 rather than by a separate conjugate model, so that the belief being updated

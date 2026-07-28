@@ -34,13 +34,19 @@ independently to each arm.}
 \item{futility_threshold}{Futility stopping threshold, held fixed during the
 search.}
 
-\item{nsim}{Number of simulated trials per hypothesis.}
+\item{nsim}{Number of simulated trials per hypothesis. Controls the variance
+of the achieved alpha and hence the precision of the calibrated threshold,
+not the bias described under \code{post_draws}.}
 
 \item{seed}{Integer seed, used for both the calibration run and the final
 design, so the reported alpha of the design equals the achieved alpha of
 the search.}
 
-\item{post_draws}{Monte Carlo draws used for each posterior probability.}
+\item{post_draws}{Monte Carlo draws used for each posterior probability. Too
+small a value biases every alpha the search evaluates and therefore the
+calibrated threshold itself, a bias \code{nsim} cannot reduce. The minimum and
+the recommended value, derived in the \code{post_draws} entry of
+\code{\link[=design_bayesian]{design_bayesian()}}, are enforced here against \code{1 - target_alpha}.}
 
 \item{workers}{Number of forked processes used via \code{\link[parallel:mclapply]{parallel::mclapply()}}.}
 
@@ -81,6 +87,15 @@ so a design whose alpha changes slowly with the threshold will have a
 correspondingly less precisely determined threshold. For a submission,
 recalibrate at large \code{nsim} and confirm the threshold on an independent
 seed.
+
+\code{nsim} is not the only thing to raise. The alpha the search is bisecting is
+itself biased when \code{post_draws} is small, because the stopping rule compares
+an estimated posterior probability against the candidate threshold, so the
+calibration then targets the wrong quantity and no amount of \code{nsim} corrects
+it. The requirement and the warning described under the \code{post_draws}
+argument of \code{\link[=design_bayesian]{design_bayesian()}} are applied here as well, against
+\code{1 - target_alpha}, which is the least favourable threshold the search can
+return.
 }
 \examples{
 sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)

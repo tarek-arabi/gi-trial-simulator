@@ -16,9 +16,11 @@ lower and upper limit, or a length two vector for a one input emulator.}
 \item{n_candidates}{Number of random candidate points to screen. Larger is
 more thorough and costs nothing but a matrix multiply.}
 
-\item{seed}{Integer seed for the candidate draw, recorded in the return value
-so the suggestion is reproducible. The ambient random number state is
-restored on exit.}
+\item{seed}{Seed for the candidate draw, recorded in the return value so the
+suggestion is reproducible. It must be a whole number: \code{\link[=set.seed]{set.seed()}}
+truncates towards zero, so a fractional seed would be recorded without being
+the seed that produced the result, and is rejected rather than truncated
+silently. The ambient random number state is restored on exit.}
 }
 \value{
 A list with \code{point} (named numeric vector, the suggested design

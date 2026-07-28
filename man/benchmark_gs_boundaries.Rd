@@ -7,7 +7,6 @@
 benchmark_gs_boundaries(
   k = 3,
   alpha = 0.025,
-  beta = 0.1,
   type = "OF",
   tolerance = 1e-04,
   information_rates = NULL
@@ -17,8 +16,6 @@ benchmark_gs_boundaries(
 \item{k}{Number of analyses, an integer of at least 2.}
 
 \item{alpha}{One-sided type I error rate.}
-
-\item{beta}{Type II error rate.}
 
 \item{type}{Boundary family: \code{"OF"} or \code{"P"} for the classical
 O'Brien-Fleming and Pocock boundaries, \code{"asOF"} or \code{"asP"} for the
@@ -41,6 +38,17 @@ with both engines and reports them side by side. \code{gsDesign::gsDesign()} is
 called with \code{test.type = 1}, which is its pure one-sided efficacy-only
 design and the counterpart of an rpact one-sided design without beta
 spending.
+}
+\details{
+There is deliberately no type II error argument. In both engines these
+boundaries are a function of \code{alpha}, the number of analyses, the
+information rates and the spending family alone: \code{test.type = 1} bounds in
+\code{gsDesign} and \code{criticalValues} in an rpact design without beta spending do
+not move when beta moves. The function used to take a validated \code{beta} that
+changed none of its output, which implied a check that was not happening.
+Each engine is now left on its own default and \code{tests/testthat} pins the
+invariance, so a future engine release that made the bounds depend on beta
+would fail the suite rather than pass silently.
 }
 \examples{
 benchmark_gs_boundaries(k = 3, type = "OF")

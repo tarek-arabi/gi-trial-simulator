@@ -11,12 +11,13 @@ nsim_required(target_mcse, expected_proportion = 0.5)
 scale. For example 0.005 to resolve power to within half a percentage
 point.}
 
-\item{expected_proportion}{The proportion being estimated. Defaults to 0.5,
-which is the worst case and therefore the conservative choice; supply the
-anticipated power to get a smaller and still sufficient number.}
+\item{expected_proportion}{The proportion being estimated, strictly between 0
+and 1. Defaults to 0.5, which maximises the variance and is therefore the
+conservative choice; supply the anticipated power to get a smaller and
+still sufficient number.}
 }
 \value{
-A single integer, the number of replications required.
+A single integer of at least 2, the number of replications required.
 }
 \description{
 Inverts the Monte Carlo standard error of a proportion,
@@ -24,6 +25,16 @@ Inverts the Monte Carlo standard error of a proportion,
 estimate a rejection rate or coverage to a stated precision. This is the
 justification for the repetition count that Morris, White and Crowther (2019)
 \url{doi:10.1002/sim.8086} require a simulation study to report.
+}
+\details{
+Two boundaries are handled explicitly rather than left to the arithmetic. An
+\code{expected_proportion} of exactly 0 or 1 is rejected: the formula returns zero
+replications there, which is never a usable answer, and a proportion known to
+be degenerate needs no simulation to resolve it. A \code{target_mcse} so small
+that the required count exceeds the largest representable integer is also
+rejected, rather than returned as an overflowed or unrunnable number. The
+result is never below 2, since a Monte Carlo standard error cannot be formed
+from a single replication.
 }
 \examples{
 nsim_required(0.005)

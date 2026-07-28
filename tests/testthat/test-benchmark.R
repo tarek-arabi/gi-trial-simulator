@@ -38,7 +38,7 @@ test_that("the spending-function variants also agree within tolerance", {
 })
 
 test_that("the benchmark reproduces the boundaries the designs actually use", {
-  b <- benchmark_gs_boundaries(k = 3, alpha = 0.025, beta = 0.1, type = "asOF")
+  b <- benchmark_gs_boundaries(k = 3, alpha = 0.025, type = "asOF")
   g <- design_group_sequential(
     scenario("ercp_acute_cholangitis"),
     k = 3, type_of_design = "asOF"
@@ -75,9 +75,52 @@ test_that("benchmark_gs_boundaries validates its arguments", {
   expect_error(benchmark_gs_boundaries(k = 1), "`k`")
   expect_error(benchmark_gs_boundaries(k = 3.5), "`k`")
   expect_error(benchmark_gs_boundaries(k = 3, alpha = 0), "alpha")
-  expect_error(benchmark_gs_boundaries(k = 3, beta = 1), "beta")
   expect_error(benchmark_gs_boundaries(k = 3, tolerance = 0), "tolerance")
   expect_error(benchmark_gs_boundaries(k = 3, type = "WT"), "type_of_design")
+})
+
+test_that("no argument of benchmark_gs_boundaries is inert", {
+  # A validated argument that changes nothing implies a check that is not
+  # happening, which is how a dead `beta` survived here. Every argument in the
+  # signature must move the output, and every argument must be exercised.
+  base <- benchmark_gs_boundaries(k = 3, alpha = 0.025, type = "OF", tolerance = 1e-4)
+  variants <- list(
+    k = benchmark_gs_boundaries(k = 4, alpha = 0.025, type = "OF", tolerance = 1e-4),
+    alpha = benchmark_gs_boundaries(k = 3, alpha = 0.005, type = "OF", tolerance = 1e-4),
+    type = benchmark_gs_boundaries(k = 3, alpha = 0.025, type = "P", tolerance = 1e-4),
+    tolerance = benchmark_gs_boundaries(k = 3, alpha = 0.025, type = "OF", tolerance = 1e-12),
+    information_rates = benchmark_gs_boundaries(
+      k = 3, alpha = 0.025, type = "OF", tolerance = 1e-4,
+      information_rates = c(0.3, 0.6, 1)
+    )
+  )
+  for (nm in names(variants)) {
+    expect_false(isTRUE(all.equal(base, variants[[nm]])), info = nm)
+  }
+  expect_setequal(names(formals(benchmark_gs_boundaries)), names(variants))
+})
+
+test_that("the compared boundaries do not depend on a type II error rate", {
+  # This is why the function takes no `beta`. If an engine release ever made
+  # its one-sided efficacy bounds move with beta, the argument would have to
+  # come back, and this test is what would say so.
+  rp <- lapply(c(0.05, 0.5), function(b) {
+    as.numeric(rpact::getDesignGroupSequential(
+      kMax = 4, alpha = 0.025, beta = b, sided = 1L, typeOfDesign = "asOF"
+    )$criticalValues)
+  })
+  gs <- lapply(c(0.05, 0.5), function(b) {
+    as.numeric(gsDesign::gsDesign(
+      k = 4, test.type = 1, alpha = 0.025, beta = b, sfu = gsDesign::sfLDOF
+    )$upper$bound)
+  })
+  expect_equal(rp[[1]], rp[[2]])
+  expect_equal(gs[[1]], gs[[2]])
+
+  b <- benchmark_gs_boundaries(k = 4, alpha = 0.025, type = "asOF")
+  expect_equal(b$rpact_z, rp[[1]])
+  expect_equal(b$gsdesign_z, gs[[1]])
+  expect_error(benchmark_gs_boundaries(k = 4, beta = 0.1), "unused argument")
 })
 
 test_that("benchmark_report summarises one row per design and all agree", {
@@ -107,4 +150,5 @@ test_that("benchmark_report validates its arguments", {
   expect_error(benchmark_report(k = 1), "`k`")
   expect_error(benchmark_report(types = character()), "types")
   expect_error(benchmark_report(types = "nonsense"), "type_of_design")
+  expect_error(benchmark_report(beta = 0.1), "unused argument")
 })

@@ -21,7 +21,8 @@ length two giving the lower and upper plotting limit. Names must match the
 input names the emulator expects. The first is the horizontal axis.}
 
 \item{n_grid}{Number of grid points per axis, so the surface is evaluated at
-\code{n_grid^2} points. Defaults to 60.}
+\code{n_grid^2} points. Must be a whole number of at least 2; a fractional value
+is rejected rather than quietly truncated. Defaults to 60.}
 }
 \value{
 A ggplot object: a raster of the posterior mean with contour lines

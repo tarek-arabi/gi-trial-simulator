@@ -10,7 +10,9 @@ fit_emulator(x, y, kernel = "matern52", nugget = NULL, lengthscale = NULL)
 \item{x}{Design inputs: a numeric matrix with one row per simulated design
 point and one column per input (for example control rate, effect size,
 sample size per arm). A data frame or, for a single input, a plain numeric
-vector is also accepted.}
+vector is also accepted. At least \code{3 * (d + 2)} design points are required
+for \code{d} inputs, three per hyperparameter, and about \code{10 * d} is the usual
+working rule of thumb (Loeppky, Sacks and Welch 2009).}
 
 \item{y}{Numeric vector of simulator output at those design points, one value
 per row of \code{x} (for example simulated power).}
@@ -36,7 +38,9 @@ An object of class \code{gi_emulator}, a list with elements \code{x}, \code{y}, 
 profile log marginal likelihood at the fit), \code{estimated} (which
 hyperparameters were estimated rather than supplied), the standardisation
 constants \code{x_center}, \code{x_scale}, \code{y_center}, \code{y_scale}, and the internal
-quantities \code{x_scaled}, \code{chol} and \code{alpha} used by the predict method.
+quantities \code{x_scaled}, \code{lengthscale_scaled} (the lengthscales on the
+standardised input scale, the scale the search box applies to), \code{chol} and
+\code{alpha} used by the predict method.
 }
 \description{
 Fits a zero mean Gaussian process to centred and scaled simulation output,
@@ -63,6 +67,21 @@ mildly optimistic; they are also the region where the emulator should not
 be trusted in the first place. The process is unconstrained, so a bounded
 output such as power can be emulated as slightly above 1 or below 0 near
 the boundary; emulate \code{qlogis(power)} and transform back if that matters.
+
+Estimation is box constrained: on the standardised input scale the
+lengthscales are searched over \verb{[1e-2, 1e3]} and the nugget over
+\verb{[1e-10, 1]}. When the likelihood is still rising at one of those limits the
+optimiser stops there and the value reported is the edge of the search
+rather than an estimate, which is warned about, naming the hyperparameter
+and the limit. A nugget at its upper limit or a lengthscale at its lower
+limit means the output is dominated by noise and the emulator is fitting
+essentially nothing; a lengthscale at its upper limit means that input is
+inert across the design. A nugget resting at its lower limit is not warned
+about, because that is the interpolating fit deterministic output should
+give. A separate warning fires, for supplied as well as estimated
+lengthscales, when the fitted correlation between the closest pair of design
+points falls below 0.05, which leaves the posterior mean flat at the mean of
+\code{y} between design points.
 }
 \examples{
 x <- matrix(seq(0, 1, length.out = 10), ncol = 1)

@@ -31,7 +31,25 @@ An object of class \code{gi_adjusted_analysis}: a list with \code{adjusted} and
 \code{rd_p_one_sided}; then \code{se_ratio} (adjusted over unadjusted variance of the
 risk difference, the variance-reduction factor), \code{se_ratio_logor} (the same
 ratio for the log odds ratio, which normally exceeds 1), \code{z_ratio}, \code{n},
-\code{n_treatment}, \code{n_events}, \code{direction} and \code{converged}.
+\code{n_treatment}, \code{n_events}, \code{direction}, \code{separation}, \code{rank_deficient} and
+\code{converged}.
+
+\code{converged} is \code{FALSE} when either \code{\link[stats:glm]{stats::glm()}} fit failed to converge,
+when either shows complete or quasi-complete separation, or when either
+design matrix was rank deficient. Each of the latter two raises a warning
+and fills the corresponding element:
+\itemize{
+\item \code{separation} names the terms whose maximum likelihood estimate does not
+exist because the outcome is perfectly predicted. \code{glm} reports
+convergence in that state, so its own flag is not enough; detection here
+is a conservative heuristic on the standardised coefficient and standard
+error, not an exact test.
+\item \code{rank_deficient} names the terms \code{glm} dropped because the design matrix
+was not of full rank, the usual cause being a \code{score} that is a linear
+function of \code{arm}. The g-computation risk difference is undefined for
+such a fit, so \code{rd}, \code{rd_se}, \code{rd_z}, \code{rd_p_one_sided} and both
+\code{se_ratio} values come back \code{NA}.
+}
 }
 \description{
 Fits the pre-specified adjusted model \code{outcome ~ arm + score} and, on the

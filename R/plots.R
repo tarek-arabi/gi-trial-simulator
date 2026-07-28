@@ -56,6 +56,54 @@ fig_scale_fill <- function(n) {
   }
 }
 
+#' Colourblind-safe discrete scales
+#'
+#' The palette this package's own figures use, exposed so that a figure built by
+#' hand outside the package looks like the ones built inside it. It is the Okabe
+#' and Ito qualitative palette, reordered so the highest-contrast hues come first
+#' and pale yellow comes last. Beyond eight levels both scales fall back to
+#' viridis, which stays discriminable at any number of levels.
+#'
+#' A `ggplot2` theme cannot set colour scales, so [gi_theme()] alone leaves a
+#' plot on ggplot2's default hue palette, which is not colourblind-safe. Use
+#' these alongside it.
+#'
+#' @param n Number of levels the scale has to cover.
+#' @return A `ggplot2` scale, to be added to a plot with `+`.
+#' @seealso [gi_theme()]
+#' @examples
+#' if (requireNamespace("ggplot2", quietly = TRUE)) {
+#'   library(ggplot2)
+#'   d <- data.frame(x = 1:6, y = c(1, 3, 2, 5, 4, 6), g = rep(c("a", "b"), each = 3))
+#'   ggplot(d, aes(x, y, colour = g)) +
+#'     geom_line() +
+#'     scale_colour_gi(2) +
+#'     gi_theme()
+#' }
+#' @name gi_scales
+NULL
+
+#' @rdname gi_scales
+#' @export
+scale_colour_gi <- function(n) {
+  fig_require_ggplot2("scale_colour_gi()")
+  fig_scale_colour(gi_check_scale_n(n))
+}
+
+#' @rdname gi_scales
+#' @export
+scale_fill_gi <- function(n) {
+  fig_require_ggplot2("scale_fill_gi()")
+  fig_scale_fill(gi_check_scale_n(n))
+}
+
+gi_check_scale_n <- function(n) {
+  if (!is.numeric(n) || length(n) != 1L || !is.finite(n) || n < 1 || n != as.integer(n)) {
+    stop("`n` must be a single whole number of levels, at least 1.", call. = FALSE)
+  }
+  as.integer(n)
+}
+
 fig_pick <- function(x, candidates) {
   hit <- candidates[candidates %in% names(x)]
   if (length(hit) == 0L) NULL else hit[[1L]]
@@ -174,6 +222,15 @@ gi_theme <- function(base_size = 11, base_family = "") {
 #' `mcse_<y>` or `mcse`, a plus or minus 1.96 MCSE band is drawn behind the
 #' line.
 #'
+#' Rows whose `x` or `y` value is missing or non-finite cannot be positioned, so
+#' they are dropped before plotting, as in [plot_boundaries()]; if that empties
+#' the data the function stops and names the column actually responsible. The
+#' band is treated separately: a row whose Monte Carlo standard error is missing
+#' or non-finite keeps its point and its line segment and simply carries no
+#' band there, and a column of entirely missing standard errors gives the same
+#' figure as no standard error column at all. A negative standard error is an
+#' error rather than a band drawn upside down.
+#'
 #' @param data A tidy data frame with one row per evaluated design, such as the
 #'   one [simulate_grid()] returns.
 #' @param x Name of the numeric column holding the design input, for example
@@ -183,7 +240,8 @@ gi_theme <- function(base_size = 11, base_family = "") {
 #'   its Monte Carlo standard error in `"rejection_rate_mcse"`.
 #' @param group Optional name of a column to split the curves by. Coerced to a
 #'   factor and mapped to colour.
-#' @return A ggplot object with one line and point series per group, the
+#' @return A ggplot object with one line and point series per group, a Monte
+#'   Carlo band over the rows that report a usable standard error, the
 #'   `gi_theme()` styling applied, axis labels taken from the column names, and
 #'   no plot title.
 #' @examples
@@ -227,27 +285,51 @@ plot_power_curve <- function(data, x, y, group = NULL) {
   mcse_col <- fig_pick(data, c(paste0(y, "_mcse"), paste0("mcse_", y), "mcse"))
   band <- !is.null(mcse_col) && is.numeric(data[[mcse_col]])
   if (band) {
-    half <- 1.96 * as.numeric(data[[mcse_col]])
+    mcse <- as.numeric(data[[mcse_col]])
+    negative <- which(is.finite(mcse) & mcse < 0)
+    if (length(negative)) {
+      stop(
+        "'", mcse_col, "' holds a negative Monte Carlo standard error at row(s) ",
+        paste(utils::head(negative, 5L), collapse = ", "),
+        ". An uncertainty band cannot have a negative half width.",
+        call. = FALSE
+      )
+    }
+    half <- 1.96 * mcse
     df$gi_lower <- df$gi_y - half
     df$gi_upper <- df$gi_y + half
-    df <- df[is.finite(df$gi_lower) & is.finite(df$gi_upper), , drop = FALSE]
-    band <- nrow(df) > 0L
   }
-  df <- df[is.finite(df$gi_x) & is.finite(df$gi_y), , drop = FALSE]
-  if (nrow(df) == 0L) {
-    stop("no finite values left to plot after dropping missing '", x, "' and '", y, "'.", call. = FALSE)
+  # A row is plottable whenever it has a position. A missing standard error
+  # costs that row its band, never its point and its line segment.
+  keep <- is.finite(df$gi_x) & is.finite(df$gi_y)
+  if (!any(keep)) {
+    culprits <- c(x, y)[c(!any(is.finite(df$gi_x)), !any(is.finite(df$gi_y)))]
+    if (length(culprits) == 0L) culprits <- c(x, y)
+    stop(
+      "no finite values left to plot: every row has a missing or non-finite ",
+      "value in ", paste0("'", culprits, "'", collapse = " or "), ".",
+      call. = FALSE
+    )
   }
+  df <- df[keep, , drop = FALSE]
   df <- df[order(df$gi_x), , drop = FALSE]
+
+  if (band) {
+    band_df <- df[is.finite(df$gi_lower) & is.finite(df$gi_upper), , drop = FALSE]
+    band <- nrow(band_df) > 0L
+  }
 
   p <- ggplot2::ggplot(df, ggplot2::aes(x = gi_x, y = gi_y))
   if (band) {
     p <- p + if (grouped) {
       ggplot2::geom_ribbon(
+        data = band_df,
         ggplot2::aes(ymin = gi_lower, ymax = gi_upper, fill = gi_group),
         alpha = 0.15, colour = NA
       )
     } else {
       ggplot2::geom_ribbon(
+        data = band_df,
         ggplot2::aes(ymin = gi_lower, ymax = gi_upper),
         fill = "grey60", alpha = 0.25
       )
@@ -290,25 +372,39 @@ fig_design_labels <- function(designs) {
 #' set of designs on a common dot chart, one panel per measure so the different
 #' units never share an axis.
 #'
-#' A `bayesian_adaptive` design has no analytic target power: its `power` field
-#' is `NA` and the achieved power sits in `detail`. This function falls back to
-#' `detail$simulated_power`, `detail$empirical_power` or `detail$power`, and
-#' marks such designs as simulated. Expected sample size is the value under the
-#' alternative, read from the first of `detail$expected_n`,
-#' `detail$expected_sample_size`, `detail$expected_n_total`,
-#' `detail$expected_n_alt`, `detail$expected_n_h1`, `detail$en` or `detail$asn`
-#' that the design carries. A `fixed` design reporting none is credited with its
-#' full sample size, since it has no interim analysis at which to stop early;
-#' any other design reporting none simply has no point in that panel, and the
-#' panel is dropped if no design reports one.
+#' Power means two different things depending on how a design was evaluated, and
+#' the two are never put on one axis. For a design solved in closed form the
+#' `power` field is the target the sample size was solved for, a design input,
+#' and it is drawn in a panel labelled `Power (analytic target)`. For a design
+#' evaluated by simulation, which is what [design_bayesian()] returns and what
+#' any design carrying a missing `power` is treated as, the number is the power
+#' the simulation achieved, an output, and it is drawn in a separate panel
+#' labelled `Power (simulated)`. Colour and point shape repeat the distinction
+#' so it survives a greyscale reading of the panel strips.
+#'
+#' Power is read from the design's own `power` field whenever that is a single
+#' non-missing number, which covers every design this package builds, including
+#' the simulated power [design_bayesian()] reports. A design that leaves `power`
+#' missing, as a hand-assembled or third-party design may, falls back to the
+#' first number among `detail$simulated_power`, `detail$empirical_power`,
+#' `detail$power` and `detail$prob_reject`, and is marked as simulated.
+#'
+#' Expected sample size is the value under the alternative, read from the first
+#' of `detail$expected_n`, `detail$expected_sample_size`,
+#' `detail$expected_n_total`, `detail$expected_n_alt`, `detail$expected_n_h1`,
+#' `detail$en`, `detail$asn` or `detail$ess` that the design carries. A `fixed`
+#' design reporting none is credited with its full sample size, since it has no
+#' interim analysis at which to stop early; any other design reporting none
+#' simply has no point in that panel, and the panel is dropped if no design
+#' reports one.
 #'
 #' @param designs A list of `gi_design` objects, or a single `gi_design`. List
 #'   names are used as the design labels; unnamed elements fall back to their
 #'   `type`, deduplicated.
 #' @return A ggplot object: designs on the vertical axis, measure value on the
 #'   horizontal axis, panelled by measure, with the `gi_theme()` styling and no
-#'   plot title. Analytic and simulated designs are distinguished by colour when
-#'   both are present.
+#'   plot title. Analytic target power and simulated achieved power occupy
+#'   separate panels and are also separated by colour and point shape.
 #' @examples
 #' if (requireNamespace("ggplot2", quietly = TRUE)) {
 #'   fixed <- structure(
@@ -385,10 +481,21 @@ plot_operating_characteristics <- function(designs) {
     }
   }, character(1))
 
-  measures <- c("Power", "Maximum n", "Expected n")
+  # Target power is a design input and simulated power is a design output. They
+  # are not the same quantity, so they get their own panels rather than one
+  # shared axis on which a reader would compare them.
+  measures <- c(
+    "Power (analytic target)", "Power (simulated)", "Maximum n", "Expected n"
+  )
+  power_measure <- ifelse(
+    kind == "Simulated", "Power (simulated)", "Power (analytic target)"
+  )
   rows <- data.frame(
     gi_label = factor(rep(labels, times = 3L), levels = rev(labels)),
-    gi_measure = factor(rep(measures, each = length(designs)), levels = measures),
+    gi_measure = factor(
+      c(power_measure, rep(c("Maximum n", "Expected n"), each = length(designs))),
+      levels = measures
+    ),
     gi_value = c(power, n_max, n_exp),
     gi_kind = factor(rep(kind, times = 3L), levels = c("Analytic", "Simulated")),
     stringsAsFactors = FALSE
@@ -406,9 +513,10 @@ plot_operating_characteristics <- function(designs) {
   p <- ggplot2::ggplot(rows, ggplot2::aes(x = gi_value, y = gi_label))
   if (nlevels(rows$gi_kind) > 1L) {
     p <- p +
-      ggplot2::geom_point(ggplot2::aes(colour = gi_kind), size = 2.4) +
+      ggplot2::geom_point(ggplot2::aes(colour = gi_kind, shape = gi_kind), size = 2.4) +
       fig_scale_colour(nlevels(rows$gi_kind)) +
-      ggplot2::labs(colour = NULL)
+      ggplot2::scale_shape_manual(values = c(Analytic = 16L, Simulated = 17L)) +
+      ggplot2::labs(colour = "Value source", shape = "Value source")
   } else {
     p <- p + ggplot2::geom_point(size = 2.4, colour = "#111111")
   }
@@ -548,6 +656,14 @@ plot_boundaries <- function(design) {
 #' Expected value of sample information against the size of the trial being
 #' costed, with a Monte Carlo uncertainty ribbon where the curve carries one.
 #'
+#' Rows whose sample size or EVSI value is missing or non-finite cannot be
+#' positioned, so they are dropped before plotting, as in [plot_boundaries()];
+#' if that empties the curve the function stops. The ribbon is treated
+#' separately: a row whose interval bounds are missing or non-finite keeps its
+#' point on the curve and simply carries no ribbon there, and a curve whose
+#' bounds are all unusable is drawn as a bare line. A negative standard error is
+#' an error rather than a ribbon drawn upside down.
+#'
 #' @param voi_curve_result The result of the package's EVSI curve routine: a
 #'   data frame, or a list containing one under `curve`, `evsi_curve`, `evsi`,
 #'   `data` or `results`. The sample size column may be `n`, `n_total`,
@@ -608,9 +724,29 @@ plot_evsi <- function(voi_curve_result) {
   if (!is.null(lo_col) && !is.null(hi_col)) {
     out$gi_lower <- as.numeric(df[[lo_col]])
     out$gi_upper <- as.numeric(df[[hi_col]])
+    inverted <- which(is.finite(out$gi_lower) & is.finite(out$gi_upper) &
+      out$gi_lower > out$gi_upper)
+    if (length(inverted)) {
+      stop(
+        "'", lo_col, "' exceeds '", hi_col, "' at row(s) ",
+        paste(utils::head(inverted, 5L), collapse = ", "),
+        ". An uncertainty interval cannot run downwards.",
+        call. = FALSE
+      )
+    }
     ribbon <- TRUE
   } else if (!is.null(se_col) && is.numeric(df[[se_col]])) {
-    half <- 1.96 * as.numeric(df[[se_col]])
+    se <- as.numeric(df[[se_col]])
+    negative <- which(is.finite(se) & se < 0)
+    if (length(negative)) {
+      stop(
+        "'", se_col, "' holds a negative standard error at row(s) ",
+        paste(utils::head(negative, 5L), collapse = ", "),
+        ". An uncertainty ribbon cannot have a negative half width.",
+        call. = FALSE
+      )
+    }
+    half <- 1.96 * se
     out$gi_lower <- out$gi_y - half
     out$gi_upper <- out$gi_y + half
     ribbon <- TRUE
@@ -619,10 +755,12 @@ plot_evsi <- function(voi_curve_result) {
   if (nrow(out) == 0L) {
     stop("the EVSI curve has no finite points to plot.", call. = FALSE)
   }
-  if (ribbon) {
-    ribbon <- all(is.finite(out$gi_lower)) && all(is.finite(out$gi_upper))
-  }
   out <- out[order(out$gi_x), , drop = FALSE]
+  # A missing bound costs that row its ribbon, never its place on the curve.
+  if (ribbon) {
+    ribbon_df <- out[is.finite(out$gi_lower) & is.finite(out$gi_upper), , drop = FALSE]
+    ribbon <- nrow(ribbon_df) > 0L
+  }
 
   x_label <- switch(n_col,
     n_per_arm = "Sample size per arm",
@@ -635,6 +773,7 @@ plot_evsi <- function(voi_curve_result) {
   p <- ggplot2::ggplot(out, ggplot2::aes(x = gi_x, y = gi_y))
   if (ribbon) {
     p <- p + ggplot2::geom_ribbon(
+      data = ribbon_df,
       ggplot2::aes(ymin = gi_lower, ymax = gi_upper),
       fill = "grey60", alpha = 0.25
     )
@@ -726,7 +865,8 @@ fig_training_points <- function(fit, x_name, y_name) {
 #'   length two giving the lower and upper plotting limit. Names must match the
 #'   input names the emulator expects. The first is the horizontal axis.
 #' @param n_grid Number of grid points per axis, so the surface is evaluated at
-#'   `n_grid^2` points. Defaults to 60.
+#'   `n_grid^2` points. Must be a whole number of at least 2; a fractional value
+#'   is rejected rather than quietly truncated. Defaults to 60.
 #' @return A ggplot object: a raster of the posterior mean with contour lines
 #'   over it, training points overlaid where available, the `gi_theme()` styling
 #'   and a continuous viridis fill scale, and no plot title.
@@ -775,8 +915,13 @@ plot_emulator_surface <- function(fit, bounds, n_grid = 60) {
       )
     }
   }
-  if (!is.numeric(n_grid) || length(n_grid) != 1L || is.na(n_grid) || n_grid < 2) {
-    stop("'n_grid' must be a single number of at least 2.", call. = FALSE)
+  if (!is.numeric(n_grid) || length(n_grid) != 1L || !is.finite(n_grid) ||
+    n_grid < 2 || n_grid > .Machine$integer.max || n_grid != trunc(n_grid)) {
+    stop(
+      "'n_grid' must be a single whole number of at least 2. A fractional ",
+      "number of grid points is rejected rather than truncated.",
+      call. = FALSE
+    )
   }
   n_grid <- as.integer(n_grid)
 
@@ -802,7 +947,9 @@ plot_emulator_surface <- function(fit, bounds, n_grid = 60) {
     )
   }
   surface <- data.frame(gi_x = grid[[x_name]], gi_y = grid[[y_name]], gi_z = as.numeric(z))
-  if (all(is.na(surface$gi_z))) {
+  # An infinite prediction is not missing, and it colours nothing: a surface
+  # with no finite value at all has no fill scale to build.
+  if (!any(is.finite(surface$gi_z))) {
     stop("the emulator returned no finite predictions on this grid.", call. = FALSE)
   }
 

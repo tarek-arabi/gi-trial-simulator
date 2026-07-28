@@ -12,7 +12,11 @@ are used to label rows.}
 
 \item{design_fn}{Function of one argument (a \code{gi_scenario}) returning either
 a \code{gi_design} or a single number giving the per-arm sample size of a fixed
-design.}
+design. Whatever it returns, every scenario is simulated at that
+scenario's own event rates: a design built on other rates contributes its
+sample size and, for a group-sequential design, its boundaries, but never
+the rates the data are drawn from. Its endpoint direction must match the
+scenario's, since that is what orients the one-sided test.}
 
 \item{nsim}{Number of simulated trials per scenario.}
 

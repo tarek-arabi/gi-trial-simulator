@@ -323,6 +323,7 @@ if (requireNamespace("ggplot2", quietly = TRUE)) {
     geom_line(linewidth = 0.8) +
     geom_vline(xintercept = observed_rrr * 100, linetype = "dotted", colour = "grey40") +
     scale_y_log10(labels = function(z) format(z, big.mark = ",", scientific = FALSE)) +
+    scale_colour_gi(3) +
     labs(x = "Relative risk reduction in 30-day mortality (%)",
          y = "Total sample size", colour = NULL, linetype = NULL) +
     gi_theme()
@@ -332,6 +333,7 @@ if (requireNamespace("ggplot2", quietly = TRUE)) {
                         colour = factor(relative_risk_reduction * 100))) +
     geom_line(linewidth = 0.8) + geom_point(size = 1.6) +
     scale_y_log10(labels = function(z) format(z, big.mark = ",", scientific = FALSE)) +
+    scale_colour_gi(3) +
     labs(x = "Control arm 30-day mortality (%)", y = "Total sample size",
          colour = "Relative risk\nreduction (%)") +
     gi_theme()
@@ -346,6 +348,7 @@ if (requireNamespace("ggplot2", quietly = TRUE)) {
   p3 <- ggplot(oc, aes(design, n, fill = quantity)) +
     geom_col(position = position_dodge(width = 0.7), width = 0.6) +
     scale_y_continuous(labels = function(z) format(z, big.mark = ",", scientific = FALSE)) +
+    scale_fill_gi(2) +
     labs(x = NULL, y = "Total sample size", fill = NULL) +
     gi_theme()
   save_figure(p3, file.path(FIGURES, "fig3_design_comparison.png"), width = 7, height = 4.5)

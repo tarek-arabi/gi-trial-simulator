@@ -1,9 +1,19 @@
 #' Cross-engine benchmark
 #'
 #' The claim this package makes is that it delegates its statistics rather
-#' than reimplementing them. The check on that claim is to compute the same
-#' group-sequential boundaries twice, once through `rpact` and once through
-#' `gsDesign`, and report the disagreement.
+#' than reimplementing them. This benchmark is one narrow check on that claim,
+#' and it is worth being exact about its scope. It computes the one-sided
+#' efficacy boundaries of a group-sequential design twice, once through
+#' `rpact` and once through `gsDesign`, and reports the disagreement. What it
+#' establishes is that the two engines agree on group-sequential efficacy
+#' boundaries for the four design families it covers (`OF`, `P`, `asOF`,
+#' `asP`), at the analysis counts and information rates it is run at.
+#'
+#' What it does not establish: it says nothing about sample sizes, nothing
+#' about futility or beta-spending bounds, nothing about the Bayesian designs,
+#' and nothing about any quantity this package obtains by simulation. Boundary
+#' agreement is evidence that the boundaries are not homegrown. It is not
+#' evidence that anything else in the package is right.
 #'
 #' Classical O'Brien-Fleming and Pocock boundaries are defined by a single
 #' shape constraint and a root search, so the two engines should agree to
@@ -37,9 +47,18 @@ gi_gsdesign_sfu <- function(type) {
 #' design and the counterpart of an rpact one-sided design without beta
 #' spending.
 #'
+#' There is deliberately no type II error argument. In both engines these
+#' boundaries are a function of `alpha`, the number of analyses, the
+#' information rates and the spending family alone: `test.type = 1` bounds in
+#' `gsDesign` and `criticalValues` in an rpact design without beta spending do
+#' not move when beta moves. The function used to take a validated `beta` that
+#' changed none of its output, which implied a check that was not happening.
+#' Each engine is now left on its own default and `tests/testthat` pins the
+#' invariance, so a future engine release that made the bounds depend on beta
+#' would fail the suite rather than pass silently.
+#'
 #' @param k Number of analyses, an integer of at least 2.
 #' @param alpha One-sided type I error rate.
-#' @param beta Type II error rate.
 #' @param type Boundary family: `"OF"` or `"P"` for the classical
 #'   O'Brien-Fleming and Pocock boundaries, `"asOF"` or `"asP"` for the
 #'   corresponding Lan-DeMets alpha-spending approximations.
@@ -55,7 +74,7 @@ gi_gsdesign_sfu <- function(type) {
 #' benchmark_gs_boundaries(k = 3, type = "OF")
 #' benchmark_gs_boundaries(k = 4, type = "asOF", tolerance = 1e-4)
 #' @export
-benchmark_gs_boundaries <- function(k = 3, alpha = 0.025, beta = 0.1,
+benchmark_gs_boundaries <- function(k = 3, alpha = 0.025,
                                     type = "OF", tolerance = 1e-4,
                                     information_rates = NULL) {
   if (!is.numeric(k) || length(k) != 1L || is.na(k) || k != round(k) || k < 2) {
@@ -66,10 +85,6 @@ benchmark_gs_boundaries <- function(k = 3, alpha = 0.025, beta = 0.1,
     alpha <= 0 || alpha >= 0.5) {
     stop("`alpha` must be a single number strictly between 0 and 0.5.", call. = FALSE)
   }
-  if (!is.numeric(beta) || length(beta) != 1L || is.na(beta) ||
-    beta <= 0 || beta >= 1) {
-    stop("`beta` must be a single number strictly between 0 and 1.", call. = FALSE)
-  }
   if (!is.numeric(tolerance) || length(tolerance) != 1L || is.na(tolerance) ||
     tolerance <= 0) {
     stop("`tolerance` must be a single positive number.", call. = FALSE)
@@ -77,10 +92,11 @@ benchmark_gs_boundaries <- function(k = 3, alpha = 0.025, beta = 0.1,
   type <- gi_check_type_of_design(type)
   rates_arg <- gi_check_information_rates(information_rates, k)
 
+  # Neither call is given a type II error rate: the quantities compared below
+  # do not depend on one. See the note in this function's documentation.
   rp <- rpact::getDesignGroupSequential(
     kMax = k,
     alpha = alpha,
-    beta = beta,
     sided = 1L,
     typeOfDesign = type,
     informationRates = rates_arg
@@ -91,7 +107,6 @@ benchmark_gs_boundaries <- function(k = 3, alpha = 0.025, beta = 0.1,
     k = k,
     test.type = 1,
     alpha = alpha,
-    beta = beta,
     sfu = gi_gsdesign_sfu(type),
     timing = if (is.null(information_rates)) 1 else info
   )
@@ -124,7 +139,6 @@ benchmark_gs_boundaries <- function(k = 3, alpha = 0.025, beta = 0.1,
 #' @param types Character vector of boundary families, drawn from `"OF"`,
 #'   `"P"`, `"asOF"` and `"asP"`.
 #' @param alpha One-sided type I error rate.
-#' @param beta Type II error rate.
 #' @param tolerance Absolute z-scale difference at or below which the two
 #'   engines are treated as agreeing.
 #' @return A data frame with one row per (`type`, `k`) combination and columns
@@ -136,7 +150,7 @@ benchmark_gs_boundaries <- function(k = 3, alpha = 0.025, beta = 0.1,
 #' @export
 benchmark_report <- function(k = 2:5,
                              types = c("OF", "P", "asOF", "asP"),
-                             alpha = 0.025, beta = 0.1, tolerance = 1e-4) {
+                             alpha = 0.025, tolerance = 1e-4) {
   if (!is.numeric(k) || length(k) == 0L || anyNA(k) ||
     any(k != round(k)) || any(k < 2)) {
     stop("`k` must be a vector of integers, each at least 2.", call. = FALSE)
@@ -149,7 +163,7 @@ benchmark_report <- function(k = 2:5,
   grid <- expand.grid(k = as.integer(k), type = types, stringsAsFactors = FALSE)
   rows <- lapply(seq_len(nrow(grid)), function(i) {
     b <- benchmark_gs_boundaries(
-      k = grid$k[i], alpha = alpha, beta = beta,
+      k = grid$k[i], alpha = alpha,
       type = grid$type[i], tolerance = tolerance
     )
     data.frame(

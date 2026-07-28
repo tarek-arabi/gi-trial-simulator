@@ -17,7 +17,11 @@ voi_curve(prior_draws, n_grid, ...)
 \value{
 A data frame with one row per sample size and columns \code{n_per_arm},
 \code{evsi}, \code{mcse}, \code{evsi_unpaired}, \code{ess_mean}, \code{evpi} and \code{fraction_of_evpi}.
-The column names are chosen to be readable directly by \code{\link[=plot_evsi]{plot_evsi()}}.
+\code{fraction_of_evpi} is \code{evsi / evpi} when EVPI is positive and \code{NA_real_}
+when EVPI is 0, which happens whenever one decision option is optimal under
+every prior draw: there is then no information to buy and no fraction of it
+to report. The column names are chosen to be readable directly by
+\code{\link[=plot_evsi]{plot_evsi()}}.
 }
 \description{
 Runs \code{\link[=evsi_trial]{evsi_trial()}} over a grid of per arm sample sizes and returns the curve

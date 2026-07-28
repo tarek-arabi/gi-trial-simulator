@@ -119,7 +119,7 @@ test_that("posterior_prob_better validates its arguments", {
 
 test_that("design_bayesian honours the shared gi_design contract", {
   sc <- bayes_scenario()
-  d <- design_bayesian(sc, n_max = 200, looks = 3, nsim = 300, post_draws = 400, seed = 11)
+  d <- design_bayesian(sc, n_max = 200, looks = 3, nsim = 300, post_draws = 500, seed = 11)
 
   expect_s3_class(d, "gi_design")
   expect_identical(class(d), c("gi_design", "list"))
@@ -136,12 +136,32 @@ test_that("design_bayesian honours the shared gi_design contract", {
 
   expect_identical(d$alpha, d$detail$alpha_null)
   expect_identical(d$power, d$detail$power)
-  expect_equal(d$detail$power_mcse, sqrt(d$power * (1 - d$power) / 300))
-  expect_equal(d$detail$alpha_mcse, sqrt(d$alpha * (1 - d$alpha) / 300))
   expect_identical(d$detail$look_n_total, c(66L, 134L, 200L))
   expect_equal(d$detail$information_rates, c(33, 67, 100) / 100)
   expect_identical(d$detail$rng_kind, "L'Ecuyer-CMRG")
   expect_null(d$detail$calibration)
+
+  # The simulation settings must be reported as they were used, because every
+  # error statement below is only interpretable against them.
+  expect_identical(d$detail$nsim, 300L)
+  expect_identical(d$detail$post_draws, 500L)
+  expect_identical(d$detail$seed, 11L)
+
+  # Deliberately not a restatement of the formula in the implementation, which
+  # would pass whatever that formula computed. Three independent facts are
+  # checked instead: the rates really are averages over the `nsim` replications
+  # that were reported, so they are whole multiples of 1 / nsim; the standard
+  # errors respect the bound the documentation claims for them; and they are
+  # strictly positive for a rate that is neither 0 nor 1. The statistical
+  # calibration of these standard errors against the spread of independent
+  # replicates is checked in its own test below.
+  expect_equal(d$power * 300, round(d$power * 300))
+  expect_equal(d$alpha * 300, round(d$alpha * 300))
+  expect_gt(d$detail$power_mcse, 0)
+  expect_gt(d$detail$alpha_mcse, 0)
+  expect_lte(d$detail$power_mcse, 0.5 / sqrt(300))
+  expect_lte(d$detail$alpha_mcse, 0.5 / sqrt(300))
+  expect_gt(d$detail$expected_n_alt_mcse, 0)
 
   st <- d$detail$stopping
   expect_s3_class(st, "data.frame")
@@ -158,15 +178,54 @@ test_that("design_bayesian honours the shared gi_design contract", {
 })
 
 
+test_that("the reported Monte Carlo standard errors match the spread of independent replicates", {
+  # What a Monte Carlo standard error claims is that repeating the simulation
+  # under a different seed moves the estimate by about that much. That claim is
+  # checked here directly, against sixteen independent replicates, rather than
+  # by rewriting the implementation's own expression. An error of a factor of
+  # two or more in either direction fails.
+  sc <- bayes_scenario()
+  runs <- lapply(601:616, function(s) {
+    design_bayesian(sc, n_max = 200, looks = 2, nsim = 200, post_draws = 500, seed = s)
+  })
+  pull <- function(f) vapply(runs, f, numeric(1))
+
+  observed_power_sd <- stats::sd(pull(function(d) d$power))
+  observed_alpha_sd <- stats::sd(pull(function(d) d$alpha))
+  observed_n_sd <- stats::sd(pull(function(d) d$detail$expected_n_alt))
+  reported_power_mcse <- mean(pull(function(d) d$detail$power_mcse))
+  reported_alpha_mcse <- mean(pull(function(d) d$detail$alpha_mcse))
+  reported_n_mcse <- mean(pull(function(d) d$detail$expected_n_alt_mcse))
+
+  expect_gt(observed_power_sd / reported_power_mcse, 0.5)
+  expect_lt(observed_power_sd / reported_power_mcse, 2)
+  expect_gt(observed_alpha_sd / reported_alpha_mcse, 0.5)
+  expect_lt(observed_alpha_sd / reported_alpha_mcse, 2)
+  expect_gt(observed_n_sd / reported_n_mcse, 0.5)
+  expect_lt(observed_n_sd / reported_n_mcse, 2)
+
+  # Quadrupling the number of replications must halve the standard error. A
+  # standard error built on the wrong power of nsim survives the checks above
+  # only by accident and fails here.
+  small <- design_bayesian(sc, n_max = 200, looks = 2, nsim = 250, post_draws = 500, seed = 91)
+  large <- design_bayesian(sc, n_max = 200, looks = 2, nsim = 1000, post_draws = 500, seed = 91)
+  expect_equal(small$detail$power_mcse / large$detail$power_mcse, 2, tolerance = 0.15)
+  expect_equal(
+    small$detail$expected_n_alt_mcse / large$detail$expected_n_alt_mcse, 2,
+    tolerance = 0.15
+  )
+})
+
+
 test_that("an odd n_max is rounded down to an even total and reported honestly", {
-  d <- design_bayesian(bayes_scenario(), n_max = 201, looks = 1, nsim = 50, post_draws = 200, seed = 1)
+  d <- design_bayesian(bayes_scenario(), n_max = 201, looks = 1, nsim = 50, post_draws = 500, seed = 1)
   expect_identical(d$n_per_arm, 100L)
   expect_identical(d$n_total, 200L)
 })
 
 
 test_that("with a single look the trial always runs to the maximum sample size", {
-  d <- design_bayesian(bayes_scenario(), n_max = 200, looks = 1, nsim = 200, post_draws = 300, seed = 6)
+  d <- design_bayesian(bayes_scenario(), n_max = 200, looks = 1, nsim = 200, post_draws = 500, seed = 6)
   expect_identical(nrow(d$detail$stopping), 1L)
   expect_equal(d$detail$expected_n_alt, 200)
   expect_equal(d$detail$expected_n_null, 200)
@@ -175,9 +234,213 @@ test_that("with a single look the trial always runs to the maximum sample size",
 
 
 test_that("interim looks reduce the expected sample size below the maximum", {
-  d <- design_bayesian(bayes_scenario(), n_max = 200, looks = 4, nsim = 400, post_draws = 300, seed = 8)
+  d <- design_bayesian(bayes_scenario(), n_max = 200, looks = 4, nsim = 400, post_draws = 500, seed = 8)
   expect_lt(d$detail$expected_n_alt, d$n_total)
   expect_lt(d$detail$expected_n_null, d$n_total)
+})
+
+
+test_that("a more aggressive futility rule cuts the expected sample size under the null", {
+  # Common random numbers: seed, nsim and post_draws are held fixed, so the
+  # simulated posterior trajectories are the same in every arm of this
+  # comparison and the only thing that moves is the stopping rule applied to
+  # them. Raising the futility threshold can then only stop trials earlier, so
+  # expected sample size must fall and the rejection rates cannot rise.
+  sc <- bayes_scenario()
+  run <- function(fut) {
+    design_bayesian(sc,
+      n_max = 240, looks = 4, futility_threshold = fut,
+      nsim = 500, post_draws = 500, seed = 31
+    )
+  }
+  ladder <- lapply(c(0.02, 0.10, 0.20, 0.35), run)
+  en_null <- vapply(ladder, function(d) d$detail$expected_n_null, numeric(1))
+  en_alt <- vapply(ladder, function(d) d$detail$expected_n_alt, numeric(1))
+  power <- vapply(ladder, function(d) d$power, numeric(1))
+  alpha <- vapply(ladder, function(d) d$alpha, numeric(1))
+
+  expect_true(all(diff(en_null) < 0))
+  expect_lt(en_null[4], en_null[1])
+  expect_true(all(diff(en_alt) <= 0))
+  expect_true(all(diff(power) <= 0))
+  expect_true(all(diff(alpha) <= 0))
+
+  # The saving has to be real, not a rounding artefact: the harshest rule here
+  # stops a large share of null trials at the first look.
+  expect_lt(en_null[4], en_null[1] - 20)
+  expect_gt(ladder[[4]]$detail$stopping$futility_null[1], 0.10)
+
+  # And it must show up where it comes from, in the futility column of the
+  # stopping table rather than anywhere else.
+  fut_null <- vapply(ladder, function(d) sum(d$detail$stopping$futility_null), numeric(1))
+  expect_true(all(diff(fut_null) > 0))
+})
+
+
+test_that("the stopping data frame is complete and reconciles with the reported summaries", {
+  d <- design_bayesian(bayes_scenario(),
+    n_max = 240, looks = 3, nsim = 500, post_draws = 500, seed = 17
+  )
+  st <- d$detail$stopping
+  nsim <- 500
+
+  expect_identical(names(st), c(
+    "look", "n_total", "information_rate",
+    "efficacy_alt", "futility_alt", "efficacy_null", "futility_null"
+  ))
+  expect_identical(st$look, 1:3)
+  expect_identical(st$n_total, d$detail$look_n_total)
+  expect_identical(st$n_total, c(80L, 160L, 240L))
+  expect_equal(st$information_rate, st$n_total / d$n_total)
+
+  probs <- as.matrix(st[, c("efficacy_alt", "futility_alt", "efficacy_null", "futility_null")])
+  expect_true(all(probs >= 0 & probs <= 1))
+  # Every entry is a count of simulated trials divided by nsim, so it must be a
+  # whole multiple of 1 / nsim.
+  expect_equal(probs * nsim, round(probs * nsim))
+
+  # Each simulated trial ends exactly once, under either hypothesis.
+  expect_equal(sum(st$efficacy_alt) + sum(st$futility_alt) + d$detail$inconclusive_alt, 1)
+  expect_equal(sum(st$efficacy_null) + sum(st$futility_null) + d$detail$inconclusive_null, 1)
+  expect_equal(sum(st$efficacy_alt), d$power)
+  expect_equal(sum(st$efficacy_null), d$alpha)
+
+  # The alternative and the null are genuinely different simulations, not the
+  # same column reported twice, and the real effect produces more efficacy
+  # stops than the null does.
+  expect_false(isTRUE(all.equal(st$efficacy_alt, st$efficacy_null)))
+  expect_gt(sum(st$efficacy_alt), sum(st$efficacy_null))
+
+  # Expected sample size rebuilt from the stopping probabilities. A trial stops
+  # at look k for efficacy or futility, and anything still open at the last
+  # look ends there inconclusively, so this reproduces the reported mean
+  # exactly. It fails if the stopping table and the expected sample size
+  # disagree about what happened.
+  rebuild <- function(eff, fut, inconclusive) {
+    p_stop <- eff + fut
+    p_stop[length(p_stop)] <- p_stop[length(p_stop)] + inconclusive
+    sum(st$n_total * p_stop)
+  }
+  expect_equal(
+    rebuild(st$efficacy_alt, st$futility_alt, d$detail$inconclusive_alt),
+    d$detail$expected_n_alt
+  )
+  expect_equal(
+    rebuild(st$efficacy_null, st$futility_null, d$detail$inconclusive_null),
+    d$detail$expected_n_null
+  )
+
+  # A single-look design puts everything in one row and nothing stops early.
+  one <- design_bayesian(bayes_scenario(),
+    n_max = 240, looks = 1, nsim = 200, post_draws = 500, seed = 17
+  )
+  st1 <- one$detail$stopping
+  expect_identical(nrow(st1), 1L)
+  expect_identical(st1$n_total, 240L)
+  expect_equal(st1$information_rate, 1)
+  expect_equal(st1$efficacy_alt + st1$futility_alt + one$detail$inconclusive_alt, 1)
+})
+
+
+test_that("too few posterior draws bias the design, and no amount of nsim repairs it", {
+  # The stopping rule compares an *estimated* posterior probability against a
+  # fixed threshold, so Monte Carlo error in that estimate does not average out
+  # across replications: it pushes trials across the boundary and biases the
+  # decision. This test drives the simulation machinery directly, below the
+  # guardrail that design_bayesian now applies, so the failure mode stays
+  # visible in CI instead of only being described in a comment.
+  sc <- bayes_scenario()
+  look_n <- 100L
+  snap <- rng_snapshot()
+  on.exit(rng_restore(snap), add = TRUE)
+
+  alpha_at <- function(post_draws, nsim, seed = 5) {
+    streams <- bayes_stream_sets(seed, nsim)$null
+    traj <- bayes_trajectories(
+      p_control = sc$control_rate, p_treatment = sc$control_rate,
+      look_n = look_n, prior = c(1, 1), direction = "lower_is_better",
+      post_draws = post_draws, streams = streams, workers = 1L
+    )
+    mean(bayes_decide(traj, look_n, 0.975, 0.10)$reason == "efficacy")
+  }
+
+  coarse <- alpha_at(2, 4000)
+  middling <- alpha_at(25, 4000)
+  resolved <- alpha_at(1000, 4000)
+
+  # Two posterior draws turn a 0.025 test into a 0.33 test.
+  expect_gt(coarse, 0.25)
+  expect_gt(coarse, 10 * resolved)
+  # Twenty five draws are still visibly inflated.
+  expect_gt(middling, 1.2 * resolved)
+  # A thousand draws land on the nominal level.
+  expect_lt(abs(resolved - 0.025), 0.01)
+
+  # The bias is a property of post_draws alone. Multiplying nsim by eight
+  # shrinks the Monte Carlo standard error by a factor of nearly three and
+  # leaves the answer just as wrong, which is the whole point: nsim buys
+  # precision, post_draws buys accuracy.
+  small_nsim <- alpha_at(2, 1000)
+  large_nsim <- alpha_at(2, 8000)
+  expect_gt(small_nsim, 0.25)
+  expect_gt(large_nsim, 0.25)
+  expect_lt(abs(large_nsim - small_nsim), 0.05)
+})
+
+
+test_that("post_draws must resolve the efficacy threshold in use", {
+  sc <- bayes_scenario()
+  # The distance from 0.5 to the threshold has to cover ten standard errors of
+  # the estimate, whose largest value is 0.5 / sqrt(post_draws). At 0.975 that
+  # is 111 draws, and twenty standard errors, the recommended value, is 444.
+  expect_identical(bayes_post_draws_needed(0.975, 10), 111L)
+  expect_identical(bayes_post_draws_needed(0.975, 20), 444L)
+  expect_identical(bayes_post_draws_floor(), 100L)
+  expect_identical(bayes_post_draws_needed(0.5, 10), NA_integer_)
+
+  expect_error(
+    design_bayesian(sc, n_max = 200, looks = 1, nsim = 20, post_draws = 2, seed = 1),
+    "`post_draws` = 2 is too few"
+  )
+  expect_error(
+    design_bayesian(sc, n_max = 200, looks = 1, nsim = 20, post_draws = 110, seed = 1),
+    "at least 111 are needed"
+  )
+  # A threshold nearer 0.5 is harder to resolve and demands more draws, so the
+  # requirement is not a constant bolted on to the function.
+  expect_error(
+    design_bayesian(sc,
+      n_max = 200, looks = 1, efficacy_threshold = 0.6,
+      nsim = 20, post_draws = 500, seed = 1
+    ),
+    "at least 2500 are needed"
+  )
+  expect_warning(
+    design_bayesian(sc, n_max = 200, looks = 1, nsim = 20, post_draws = 200, seed = 1),
+    "near the resolution limit"
+  )
+  expect_silent(
+    design_bayesian(sc, n_max = 200, looks = 1, nsim = 20, post_draws = 444, seed = 1)
+  )
+
+  # calibrate_bayesian applies the same rule against the least favourable
+  # threshold its search can return, and fails before simulating anything.
+  expect_error(
+    calibrate_bayesian(sc, n_max = 200, target_alpha = 0.025, looks = 1, nsim = 20, post_draws = 50),
+    "`post_draws` = 50 is too few"
+  )
+  seen <- character()
+  withCallingHandlers(
+    calibrate_bayesian(sc,
+      n_max = 200, target_alpha = 0.025, looks = 1,
+      nsim = 100, post_draws = 200, seed = 1
+    ),
+    warning = function(w) {
+      seen <<- c(seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_true(any(grepl("near the resolution limit", seen)))
 })
 
 
@@ -194,6 +457,26 @@ test_that("design_bayesian validates its arguments", {
   )
   expect_error(design_bayesian(sc, 100, nsim = 1), "`nsim`")
   expect_error(design_bayesian(sc, 100, workers = 0), "`workers`")
+
+  # A count argument beyond 32-bit integer range must produce the message the
+  # function intends, not base R's "missing value where TRUE/FALSE needed" from
+  # comparing against an NA produced by silent coercion.
+  for (bad in list(3e9, 2^31, -3e9, .Machine$integer.max + 1)) {
+    expect_error(design_bayesian(sc, 200, nsim = bad), "`nsim` must be a single whole number")
+    expect_error(design_bayesian(sc, bad), "`n_max` must be a single whole number")
+    expect_error(design_bayesian(sc, 200, seed = bad), "`seed` must be a single whole number")
+    expect_error(design_bayesian(sc, 200, looks = bad), "`looks` must be a single whole number")
+    expect_error(design_bayesian(sc, 200, workers = bad), "`workers` must be a single whole number")
+  }
+  expect_error(posterior_prob_better(5, 20, 5, 20, draws = 3e9), "`draws` must be a single whole number")
+  expect_error(calibrate_bayesian(sc, 200, nsim = 3e9), "`nsim` must be a single whole number")
+  expect_error(calibrate_bayesian(sc, 200, max_iter = 3e9), "`max_iter` must be a single whole number")
+
+  # The largest representable value is still accepted, so the range check has
+  # not been tightened past what an integer can hold.
+  expect_identical(check_count(.Machine$integer.max, "x"), .Machine$integer.max)
+  expect_identical(check_count(-.Machine$integer.max, "x", min = -.Machine$integer.max),
+                   -.Machine$integer.max)
 })
 
 
@@ -286,7 +569,7 @@ test_that("results are reproducible for a given seed and independent of the numb
   sc <- bayes_scenario()
   args <- list(
     scenario = sc, n_max = 200, looks = 3, nsim = 300,
-    post_draws = 400, seed = 11
+    post_draws = 500, seed = 11
   )
   a <- do.call(design_bayesian, args)
   b <- do.call(design_bayesian, args)
@@ -312,7 +595,7 @@ test_that("calibration is reproducible and independent of the number of workers"
   sc <- bayes_scenario()
   args <- list(
     scenario = sc, n_max = 200, target_alpha = 0.025, looks = 2,
-    nsim = 400, post_draws = 400, seed = 77
+    nsim = 400, post_draws = 500, seed = 77
   )
   serial <- do.call(calibrate_bayesian, args)
   forked <- do.call(calibrate_bayesian, utils::modifyList(args, list(workers = 2)))
@@ -330,7 +613,7 @@ test_that("simulation leaves the caller's random number state untouched", {
   set.seed(4242)
   before <- runif(3)
   set.seed(4242)
-  invisible(design_bayesian(sc, n_max = 100, looks = 2, nsim = 20, post_draws = 100, seed = 5))
+  invisible(design_bayesian(sc, n_max = 100, looks = 2, nsim = 20, post_draws = 500, seed = 5))
   after <- runif(3)
   expect_identical(before, after)
   expect_identical(RNGkind()[1], "Mersenne-Twister")
@@ -369,7 +652,7 @@ test_that("calibration warns and reports when the target cannot be bracketed", {
   expect_warning(
     strict <- calibrate_bayesian(sc,
       n_max = 600, target_alpha = 1e-5, looks = 5,
-      nsim = 800, post_draws = 300, seed = 2
+      nsim = 800, post_draws = 500, seed = 2
     ),
     "still"
   )

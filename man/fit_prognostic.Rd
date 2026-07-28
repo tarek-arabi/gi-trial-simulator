@@ -23,15 +23,40 @@ or a \code{gi_outcome} from \code{\link[=outcome_model]{outcome_model()}}.}
 \code{~ age + bilirubin}. Defaults to \code{~ .}, every column of \code{train_cohort}.}
 
 \item{folds}{Number of cross-validation folds used for the honest
-discrimination estimate.}
+discrimination estimate. Folds are assigned within outcome class, so the
+estimate is only produced when there are at least \code{folds} events and at
+least \code{folds} non-events; see the \code{auc_cv} note under Value.}
 
 \item{seed}{Integer seed for the fold assignment.}
 }
 \value{
 An object of class \code{gi_prognostic}: a list with \code{model} (the fitted
 \code{\link[stats:glm]{stats::glm()}}), \code{formula}, \code{predictors}, \code{n_train}, \code{event_rate},
-\code{auc_apparent} (in-sample, optimistic), \code{auc_cv} (out-of-fold, honest),
-\code{folds}, \code{seed} and \code{converged}.
+\code{auc_apparent} (in-sample, optimistic), \code{auc_cv}, \code{oof_score}, \code{fold_id},
+\code{folds}, \code{seed}, \code{cv_performed}, \code{separation} and \code{converged}.
+
+\code{auc_cv} is the out-of-fold AUC. It is an honest discrimination estimate
+only when every fold holds both events and non-events, so folds are
+assigned within outcome class to guarantee that whenever the class sizes
+allow it. That needs at least \code{folds} events and at least \code{folds}
+non-events. \code{fold_id} returns the assignment actually used, so the
+guarantee can be checked rather than taken on trust. When the training data
+is too rare-event for it to hold, no cross-validation is run: \code{auc_cv} is
+\code{NA_real_}, \code{cv_performed} is \code{FALSE}, \code{oof_score} and \code{fold_id} are all
+\code{NA}, and a warning reports the two class counts. The alternative would be
+an out-of-fold score built partly from folds whose training set contained
+no events at all, which yields a number that is frequently below 0.5, is
+not a discrimination estimate, and is indistinguishable from one on
+inspection.
+
+\code{converged} is \code{FALSE} when \code{\link[stats:glm]{stats::glm()}} failed to converge \strong{or} when
+the fit shows complete or quasi-complete separation, in which case
+\code{separation} names the affected terms and a warning is raised. \code{glm}'s own
+convergence flag is \code{TRUE} under separation, so it is not sufficient on its
+own. Separation is detected from the standardised coefficient and standard
+error, which is a heuristic and not an exact test: it is deliberately
+conservative, so it will not flag a large but well-estimated effect and can
+miss the mildest quasi-separation.
 }
 \description{
 Fit a prognostic model on historical control-arm data

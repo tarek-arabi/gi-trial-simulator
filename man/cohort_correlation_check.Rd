@@ -17,6 +17,11 @@ sharper estimate of the attenuation.}
 \value{
 A data frame with one row per covariate pair: \code{var1}, \code{var2},
 \code{target}, \code{realised} and \code{attenuation} (target minus realised).
+
+Errors, naming the covariate, if any covariate comes out constant in the
+simulated cohort, since its correlations are then undefined. That happens
+when a marginal is extreme relative to \code{n}, for example a binary covariate
+whose \code{prob} is small enough that \code{n} draws contain a single category.
 }
 \description{
 Reports, pair by pair, the correlation asked for on the latent normal scale

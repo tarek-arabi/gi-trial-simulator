@@ -184,9 +184,14 @@ print.gi_covariate <- function(x, ...) {
 #' Describe a correlated covariate structure
 #'
 #' @param covariates A list of `gi_covariate` objects (or a single one).
-#' @param correlation Target correlation matrix on the latent normal scale, with
-#'   rows and columns in the order of `covariates` or carrying their names.
-#'   Defaults to the identity, meaning independent covariates.
+#' @param correlation Target correlation matrix on the latent normal scale.
+#'   Either name both dimensions, in which case the matrix may be in any order
+#'   and is reordered to match `covariates`, or name neither, in which case it
+#'   is read positionally in the order of `covariates`. A matrix carrying only
+#'   `rownames` or only `colnames` is rejected: its intended ordering is
+#'   ambiguous, and reading it positionally would silently pair covariates with
+#'   the wrong correlations. Defaults to the identity, meaning independent
+#'   covariates.
 #' @return An object of class `gi_cohort_spec`: a list with `covariates`,
 #'   `correlation` (named, validated) and `names`.
 #' @seealso [simulate_cohort()], [cohort_correlation_check()]
@@ -265,7 +270,26 @@ validate_correlation <- function(correlation, nms) {
   if (anyNA(correlation)) {
     stop("`correlation` contains NA.", call. = FALSE)
   }
-  if (!is.null(rownames(correlation)) && !is.null(colnames(correlation))) {
+  has_rownames <- !is.null(rownames(correlation))
+  has_colnames <- !is.null(colnames(correlation))
+  # One set of names on its own is refused rather than dropped. Reading such a
+  # matrix positionally would pair covariates with the wrong correlations
+  # without saying so, and honouring the one set that is present would require
+  # assuming the missing dimension follows the same order, which is exactly the
+  # assumption that goes wrong.
+  if (xor(has_rownames, has_colnames)) {
+    stop(
+      "`correlation` carries ",
+      if (has_rownames) "rownames but no colnames" else "colnames but no rownames",
+      ". Supply both sets of dimnames or neither. With only one set the ",
+      "intended order of the other dimension is unknown, so the matrix would ",
+      "have to be read positionally and could silently pair covariates with ",
+      "the wrong correlations. Positional order is: ",
+      paste(nms, collapse = ", "), ".",
+      call. = FALSE
+    )
+  }
+  if (has_rownames && has_colnames) {
     if (!setequal(rownames(correlation), nms) || !setequal(colnames(correlation), nms)) {
       stop(
         "`correlation` dimnames do not match the covariate names (",
@@ -418,6 +442,11 @@ simulate_cohort <- function(spec, n, seed = 1) {
 #' @param seed Integer seed for the check.
 #' @return A data frame with one row per covariate pair: `var1`, `var2`,
 #'   `target`, `realised` and `attenuation` (target minus realised).
+#'
+#'   Errors, naming the covariate, if any covariate comes out constant in the
+#'   simulated cohort, since its correlations are then undefined. That happens
+#'   when a marginal is extreme relative to `n`, for example a binary covariate
+#'   whose `prob` is small enough that `n` draws contain a single category.
 #' @seealso [simulate_cohort()]
 #' @examples
 #' spec <- cohort_spec(
@@ -439,6 +468,23 @@ cohort_correlation_check <- function(spec, n = 20000, seed = 1) {
     )
   }
   cohort <- simulate_cohort(spec, n = n, seed = seed)
+  # A covariate that came out constant has no correlation with anything.
+  # stats::cor would return NA for its whole row and column behind base R's bare
+  # "the standard deviation is zero" warning, which names nothing and is easy to
+  # read past in a loop.
+  spread <- vapply(cohort, function(v) stats::sd(as.numeric(v)), numeric(1))
+  degenerate <- names(cohort)[is.na(spread) | !is.finite(spread) | spread == 0]
+  if (length(degenerate)) {
+    stop(
+      "Covariate(s) ", paste0("'", degenerate, "'", collapse = ", "),
+      " took a single constant value in the simulated cohort of n = ", n,
+      ", so every correlation involving them is undefined. This happens when a ",
+      "marginal is extreme enough that n draws contain only one category, for ",
+      "example a binary covariate with a very small `prob`. Raise `n`, or move ",
+      "the marginal away from its boundary.",
+      call. = FALSE
+    )
+  }
   realised <- stats::cor(as.matrix(cohort))
   pairs <- utils::combn(spec$names, 2L)
   target <- spec$correlation[cbind(pairs[1L, ], pairs[2L, ])]

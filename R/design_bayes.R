@@ -46,11 +46,88 @@ rng_restore <- function(snap) {
 }
 
 check_count <- function(x, name, min = 1L) {
-  if (!is.numeric(x) || length(x) != 1L || is.na(x) || !is.finite(x) ||
-    x != as.integer(x) || x < min) {
-    stop("`", name, "` must be a single whole number of at least ", min, ".", call. = FALSE)
+  # The comparison is against trunc(), not as.integer(). as.integer() returns NA
+  # with a coercion warning for anything outside 32-bit integer range, so a
+  # guard written with it fails on out-of-range input with base R's "missing
+  # value where TRUE/FALSE needed" instead of the message intended here. The
+  # representable range is therefore checked explicitly and reported.
+  ok <- is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x) &&
+    x == trunc(x) && x >= min && abs(x) <= .Machine$integer.max
+  if (!ok) {
+    stop(
+      "`", name, "` must be a single whole number of at least ", min,
+      " and at most ", .Machine$integer.max, ".",
+      call. = FALSE
+    )
   }
   as.integer(x)
+}
+
+# How many standard errors of an estimated posterior probability must fit
+# between 0.5 and a decision threshold. Below `gi_post_draws_min_sd` the
+# simulated design is not the design that was asked for, so the call is an
+# error; below `gi_post_draws_rec_sd` there is residual Monte Carlo bias worth
+# warning about. See the `post_draws` entry of [design_bayesian()] for the
+# derivation and for the magnitude of the damage.
+gi_post_draws_min_sd <- 10
+gi_post_draws_rec_sd <- 20
+
+# Draws needed for the largest standard error of an estimated posterior
+# probability, 0.5 / sqrt(draws), to be `sd_factor` times smaller than the
+# distance from `threshold` to 0.5. That standard error is attained at a true
+# probability of 0.5, which is where the null distribution of the decision
+# quantity is centred, so this is the ratio that decides whether the bulk of
+# the null can cross the threshold on estimation noise alone. Returns NA for a
+# threshold at or below 0.5, where no number of draws makes the comparison
+# meaningful and only the absolute floor applies.
+bayes_post_draws_needed <- function(threshold, sd_factor) {
+  gap <- threshold - 0.5
+  if (!is.finite(gap) || gap <= 0) {
+    return(NA_integer_)
+  }
+  # The rounding before ceiling() is not cosmetic: (0.5 * 10 / (0.6 - 0.5))^2 is
+  # 2500.0000000000005 in binary floating point, and ceiling() alone would turn
+  # a requirement of 2500 draws into one of 2501.
+  needed <- ceiling(round((0.5 * sd_factor / gap)^2, 8))
+  as.integer(min(needed, .Machine$integer.max))
+}
+
+# The gap between 0.5 and a threshold can never exceed 0.5, so this is the
+# smallest number of draws that can resolve any threshold at all.
+bayes_post_draws_floor <- function() {
+  bayes_post_draws_needed(1, gi_post_draws_min_sd)
+}
+
+check_post_draws <- function(post_draws, threshold) {
+  post_draws <- check_count(post_draws, "post_draws", min = 2L)
+  needed <- bayes_post_draws_needed(threshold, gi_post_draws_min_sd)
+  recommended <- bayes_post_draws_needed(threshold, gi_post_draws_rec_sd)
+  required <- if (is.na(needed)) bayes_post_draws_floor() else max(needed, bayes_post_draws_floor())
+  if (post_draws < required) {
+    stop(
+      "`post_draws` = ", post_draws, " is too few to resolve a decision threshold",
+      if (is.na(needed)) "" else paste0(" of ", signif(threshold, 4)),
+      "; at least ", required, " are needed. Each posterior probability is a mean of ",
+      "`post_draws` draws, so its standard error is up to ", signif(0.5 / sqrt(post_draws), 3),
+      ", while the null distribution of that probability is centred on 0.5. Trials then cross ",
+      "the threshold on estimation noise alone, which biases the simulated type I error ",
+      "upwards by more than tenfold at `post_draws` = 2, and no value of `nsim` removes that ",
+      "bias. See the `post_draws` entry in ?design_bayesian.",
+      call. = FALSE
+    )
+  }
+  if (!is.na(recommended) && post_draws < recommended) {
+    warning(
+      "`post_draws` = ", post_draws, " is near the resolution limit for a decision threshold of ",
+      signif(threshold, 4), ": the standard error of each posterior probability is up to ",
+      signif(0.5 / sqrt(post_draws), 3), ", more than a ", gi_post_draws_rec_sd, "th of the ",
+      "distance from 0.5 to that threshold. The reported operating characteristics carry ",
+      "residual Monte Carlo bias that `nsim` cannot reduce. Use at least ", recommended,
+      " draws; the default of 4000 leaves more room again.",
+      call. = FALSE
+    )
+  }
+  post_draws
 }
 
 check_unit <- function(x, name) {
@@ -95,6 +172,10 @@ check_direction <- function(direction) {
 #' The estimate carries Monte Carlo error of at most `0.5 / sqrt(draws)`, so
 #' 4000 draws gives a standard error under 0.008 and 100000 draws under 0.0016.
 #' Choose `draws` against the decision thresholds the value will be compared to.
+#' When the value drives a stopping rule that error becomes a bias in the
+#' decision rather than noise around it, which is why [design_bayesian()]
+#' enforces a minimum: see the `post_draws` entry there for the rule and for
+#' what happens below it.
 #'
 #' @param events_t Number of events observed in the treatment arm.
 #' @param n_t Number of participants observed in the treatment arm.
@@ -302,6 +383,17 @@ resolve_workers <- function(workers) {
 #' simulation found. Use [calibrate_bayesian()] to choose a threshold that
 #' delivers a target level.
 #'
+#' Two separate Monte Carlo errors sit in these numbers and they behave
+#' differently. `nsim` controls *variance*: how much a reported rate moves from
+#' one seed to the next, falling as `1 / sqrt(nsim)`. `post_draws` controls
+#' *bias*: the stopping rule compares an estimated posterior probability, not
+#' the exact one, against a fixed threshold, and the estimation noise pushes
+#' trials across that threshold asymmetrically. The resulting distortion is a
+#' property of `post_draws` alone and does not shrink as `nsim` grows, so a
+#' large `nsim` on top of a small `post_draws` reports a biased answer with
+#' impressive precision. Set `post_draws` for accuracy first, then `nsim` for
+#' precision.
+#'
 #' @param scenario A `gi_scenario`, as returned by [scenario()].
 #' @param n_max Maximum total sample size across both arms.
 #' @param looks Number of analyses, including the final one. `looks = 1` is a
@@ -312,11 +404,36 @@ resolve_workers <- function(workers) {
 #'   probability that treatment is better exceeds this value.
 #' @param futility_threshold Stop for futility when that probability falls
 #'   below this value. Must be smaller than `efficacy_threshold`.
-#' @param nsim Number of simulated trials per hypothesis. The Monte Carlo
-#'   standard error of every reported rate is at most `0.5 / sqrt(nsim)`.
+#' @param nsim Number of simulated trials per hypothesis. This controls the
+#'   variance of the reported rates and nothing else: the Monte Carlo standard
+#'   error of every reported rate is at most `0.5 / sqrt(nsim)`. It does not
+#'   control the bias described under `post_draws`, which no value of `nsim`
+#'   reduces.
 #' @param seed Integer seed. Independent L'Ecuyer-CMRG streams are derived from
 #'   it, one per simulated trial, so results do not depend on `workers`.
-#' @param post_draws Monte Carlo draws used for each posterior probability.
+#' @param post_draws Monte Carlo draws used for each posterior probability, at
+#'   every look of every simulated trial. This is the accuracy dial of the
+#'   design and too small a value corrupts the operating characteristics rather
+#'   than merely blurring them. Each posterior probability is a mean of
+#'   `post_draws` Bernoulli draws, so its standard error is at most
+#'   `0.5 / sqrt(post_draws)`, attained when the true probability is 0.5, which
+#'   is where the null distribution of the decision quantity is centred. If that
+#'   standard error is not small next to the distance from `efficacy_threshold`
+#'   to 0.5, trials from the bulk of the null cross the threshold on estimation
+#'   noise alone: at `efficacy_threshold = 0.975` and `post_draws = 2` the
+#'   simulated type I error is about 0.33, more than ten times nominal, and it
+#'   stays there however large `nsim` is. The function therefore requires that
+#'   distance to cover at least ten standard errors, which is
+#'   `ceiling((5 / (efficacy_threshold - 0.5))^2)` draws, 111 at the default
+#'   threshold and never fewer than 100, and warns below twenty standard errors,
+#'   `ceiling((10 / (efficacy_threshold - 0.5))^2)`, which is 444 at the default
+#'   threshold. Meeting the minimum is not the same as being accurate: a
+#'   secondary effect, that an estimate taking only the values `0/post_draws` to
+#'   `post_draws/post_draws` cannot land exactly on the threshold, still moves
+#'   the simulated type I error by roughly `1 / ((1 - efficacy_threshold) *
+#'   post_draws)` in relative terms, about 9 percent at 444 draws and 1 percent
+#'   at the default of 4000. Treat the minimum as the point below which the
+#'   answer is wrong, and the default as the point at which it is usable.
 #' @param workers Number of forked processes used via [parallel::mclapply()].
 #'   Results are identical for any value; only the run time changes.
 #' @return An object of class `gi_design` with `type = "bayesian_adaptive"`,
@@ -356,7 +473,7 @@ design_bayesian <- function(scenario, n_max, looks = 3, prior = c(1, 1),
     )
   }
   nsim <- check_count(nsim, "nsim", min = 2L)
-  post_draws <- check_count(post_draws, "post_draws", min = 2L)
+  post_draws <- check_post_draws(post_draws, efficacy_threshold)
   seed <- check_count(seed, "seed", min = -.Machine$integer.max)
   workers <- resolve_workers(workers)
   direction <- check_direction(scenario$direction)
@@ -467,6 +584,15 @@ design_bayesian <- function(scenario, n_max, looks = 3, prior = c(1, 1),
 #' recalibrate at large `nsim` and confirm the threshold on an independent
 #' seed.
 #'
+#' `nsim` is not the only thing to raise. The alpha the search is bisecting is
+#' itself biased when `post_draws` is small, because the stopping rule compares
+#' an estimated posterior probability against the candidate threshold, so the
+#' calibration then targets the wrong quantity and no amount of `nsim` corrects
+#' it. The requirement and the warning described under the `post_draws`
+#' argument of [design_bayesian()] are applied here as well, against
+#' `1 - target_alpha`, which is the least favourable threshold the search can
+#' return.
+#'
 #' @param scenario A `gi_scenario`, as returned by [scenario()].
 #' @param n_max Maximum total sample size across both arms.
 #' @param target_alpha Target one-sided simulated type I error.
@@ -475,11 +601,17 @@ design_bayesian <- function(scenario, n_max, looks = 3, prior = c(1, 1),
 #'   independently to each arm.
 #' @param futility_threshold Futility stopping threshold, held fixed during the
 #'   search.
-#' @param nsim Number of simulated trials per hypothesis.
+#' @param nsim Number of simulated trials per hypothesis. Controls the variance
+#'   of the achieved alpha and hence the precision of the calibrated threshold,
+#'   not the bias described under `post_draws`.
 #' @param seed Integer seed, used for both the calibration run and the final
 #'   design, so the reported alpha of the design equals the achieved alpha of
 #'   the search.
-#' @param post_draws Monte Carlo draws used for each posterior probability.
+#' @param post_draws Monte Carlo draws used for each posterior probability. Too
+#'   small a value biases every alpha the search evaluates and therefore the
+#'   calibrated threshold itself, a bias `nsim` cannot reduce. The minimum and
+#'   the recommended value, derived in the `post_draws` entry of
+#'   [design_bayesian()], are enforced here against `1 - target_alpha`.
 #' @param workers Number of forked processes used via [parallel::mclapply()].
 #' @param tol Width of the threshold bracket at which bisection stops.
 #' @param max_iter Maximum number of bisection steps.
@@ -508,7 +640,12 @@ calibrate_bayesian <- function(scenario, n_max, target_alpha = 0.025, looks = 3,
   target_alpha <- check_unit(target_alpha, "target_alpha")
   futility_threshold <- check_unit(futility_threshold, "futility_threshold")
   nsim <- check_count(nsim, "nsim", min = 2L)
-  post_draws <- check_count(post_draws, "post_draws", min = 2L)
+  # The threshold the search will land on is not known yet, but it cannot come
+  # in below 1 - target_alpha for a single look and only rises with the number
+  # of looks. That is therefore the least favourable threshold `post_draws` has
+  # to resolve, and checking against it here fails fast rather than after the
+  # null trajectories have been simulated.
+  post_draws <- check_post_draws(post_draws, 1 - target_alpha)
   seed <- check_count(seed, "seed", min = -.Machine$integer.max)
   workers <- resolve_workers(workers)
   if (!is.numeric(tol) || length(tol) != 1L || is.na(tol) || tol <= 0) {

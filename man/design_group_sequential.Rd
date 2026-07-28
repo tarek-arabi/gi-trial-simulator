@@ -47,7 +47,20 @@ Beyond the shared contract, \code{detail} holds \code{efficacy_z}, \code{futilit
 \code{information_rates}, \code{n_cumulative}, \code{cumulative_alpha_spent},
 \code{expected_n_h0}, \code{expected_n_h1}, \code{expected_n_h01}, \code{k},
 \code{type_of_design}, \code{futility}, \code{binding_futility}, the unrounded
-\code{n_fixed}, and the underlying \code{rpact_design} and \code{rpact_sample_size}.
+\code{n_fixed}, the rounded \code{n_control} and \code{n_treatment}, \code{allocation_ratio},
+\code{direction_upper}, and the underlying \code{rpact_design} and
+\code{rpact_sample_size}.
+
+\code{n_total} is the maximum sample size, always the sum of the two arm
+sizes. \code{n_per_arm} is the common arm size and is defined only under 1:1
+allocation; when \code{allocation_ratio} is anything else the arms differ and
+\code{n_per_arm} is \code{NA_real_}, so that code which assumes balanced arms fails
+rather than quietly using the wrong number. Read \code{detail$n_treatment} and
+\code{detail$n_control} when allocation may be unequal.
+
+\code{detail$futility_z} is \code{NA} at every analysis with no usable futility
+bound, which includes the final analysis and any analysis where rpact
+returns its no-futility floor of -6.
 }
 \description{
 Builds the boundaries with \code{\link[rpact:getDesignGroupSequential]{rpact::getDesignGroupSequential()}} and the

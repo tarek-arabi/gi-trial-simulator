@@ -17,6 +17,30 @@ NULL
 .mcse_mean <- function(x) stats::sd(x) / sqrt(length(x))
 .mcse_emp_se <- function(emp_se, nsim) emp_se / sqrt(2 * (nsim - 1))
 
+# Degenerate replicates, those with no defined score statistic or a zero-width
+# interval, are counted by the simulator. Older objects carry only the
+# per-replicate flag; objects carrying neither are refused rather than reported
+# as having none, because "none" would be a claim this function cannot support.
+.degenerate_counts <- function(sim) {
+  counts <- sim$degenerate
+  if (is.list(counts) && all(c("score_undefined", "interval_undefined", "any") %in% names(counts))) {
+    return(counts)
+  }
+  flag <- sim$results$degenerate
+  if (is.logical(flag)) {
+    return(list(
+      score_undefined = NA_integer_,
+      interval_undefined = NA_integer_,
+      any = sum(flag)
+    ))
+  }
+  stop(
+    "`sim` carries no record of degenerate replications; it predates ",
+    "degeneracy accounting and must be re-run before it can be summarised.",
+    call. = FALSE
+  )
+}
+
 #' Performance measures for a simulation, with Monte Carlo standard errors
 #'
 #' Summarises a `gi_simulation` into the performance measures an ADEMP-compliant
@@ -34,12 +58,23 @@ NULL
 #' well-known bias of an estimate taken at a boundary crossing rather than an
 #' error in the simulation.
 #'
+#' A `degenerate_rate` row reports the replications whose score statistic or
+#' confidence interval was undefined because an arm had no events or every
+#' patient had one. Those replications are carried through the other measures
+#' as non-rejections with a zero-width interval, which is what a real analysis
+#' would face, so the row exists to make their weight visible: a rejection rate
+#' resting on a large degenerate fraction is describing an infeasible trial, not
+#' a design.
+#'
 #' @param sim A `gi_simulation`, as returned by [simulate_fixed()] or
 #'   [simulate_group_sequential()].
 #' @param truth True risk difference the estimator is judged against. Defaults
 #'   to the difference in the event rates the data were generated from.
 #' @return A data frame with one row per performance measure and columns
-#'   `measure`, `estimate`, `mcse` and `definition`.
+#'   `measure`, `estimate`, `mcse` and `definition`. Rows are
+#'   `rejection_rate`, `bias`, `empirical_se`, `mse`, `coverage`,
+#'   `mean_sample_size` and `degenerate_rate`, plus `early_stopping_rate` for a
+#'   group-sequential simulation.
 #' @references Morris TP, White IR, Crowther MJ. Using simulation studies to
 #'   evaluate statistical methods. Statistics in Medicine. 2019;38(11):2074-2102.
 #'   \doi{10.1002/sim.8086}
@@ -74,6 +109,24 @@ ademp_summary <- function(sim, truth = NULL) {
   covered <- res$ci_lower <= truth & truth <= res$ci_upper
   coverage <- mean(covered)
 
+  degenerate <- .degenerate_counts(sim)
+  degenerate_rate <- degenerate$any / nsim
+  degenerate_split <- if (is.na(degenerate$score_undefined)) {
+    "the split between the two is not recorded on this simulation"
+  } else {
+    paste0(
+      degenerate$score_undefined,
+      " with an undefined score statistic, scored as z = 0 and so as non-rejections; ",
+      degenerate$interval_undefined, " with a zero-width confidence interval"
+    )
+  }
+  degenerate_definition <- paste0(
+    "Proportion of replications with no defined test statistic or a zero-width ",
+    "interval, because an arm had no events or every patient had one: ",
+    degenerate$any, " of ", nsim, " replications (", degenerate_split,
+    "). These replications are included in every measure above."
+  )
+
   rejection_meaning <- if (isTRUE(all.equal(truth, 0))) {
     "type I error, since the data are generated under the null"
   } else {
@@ -83,7 +136,7 @@ ademp_summary <- function(sim, truth = NULL) {
   out <- data.frame(
     measure = c(
       "rejection_rate", "bias", "empirical_se", "mse", "coverage",
-      "mean_sample_size"
+      "mean_sample_size", "degenerate_rate"
     ),
     estimate = c(
       rejection,
@@ -91,7 +144,8 @@ ademp_summary <- function(sim, truth = NULL) {
       emp_se,
       mse,
       coverage,
-      mean(res$n_total)
+      mean(res$n_total),
+      degenerate_rate
     ),
     mcse = c(
       .mcse_proportion(rejection, nsim),
@@ -99,7 +153,8 @@ ademp_summary <- function(sim, truth = NULL) {
       .mcse_emp_se(emp_se, nsim),
       .mcse_mean(error^2),
       .mcse_proportion(coverage, nsim),
-      .mcse_mean(res$n_total)
+      .mcse_mean(res$n_total),
+      .mcse_proportion(degenerate_rate, nsim)
     ),
     definition = c(
       paste0(
@@ -113,7 +168,8 @@ ademp_summary <- function(sim, truth = NULL) {
       "Standard deviation of the estimated risk difference across replications.",
       "Mean squared difference between the estimated and true risk difference.",
       "Proportion of replications whose nominal 95 percent Wald interval for the risk difference contains the true value.",
-      "Mean total sample size actually used, both arms combined. Constant by construction for a fixed design."
+      "Mean total sample size actually used, both arms combined. Constant by construction for a fixed design.",
+      degenerate_definition
     ),
     stringsAsFactors = FALSE
   )
@@ -141,13 +197,23 @@ ademp_summary <- function(sim, truth = NULL) {
 #' justification for the repetition count that Morris, White and Crowther (2019)
 #' <doi:10.1002/sim.8086> require a simulation study to report.
 #'
+#' Two boundaries are handled explicitly rather than left to the arithmetic. An
+#' `expected_proportion` of exactly 0 or 1 is rejected: the formula returns zero
+#' replications there, which is never a usable answer, and a proportion known to
+#' be degenerate needs no simulation to resolve it. A `target_mcse` so small
+#' that the required count exceeds the largest representable integer is also
+#' rejected, rather than returned as an overflowed or unrunnable number. The
+#' result is never below 2, since a Monte Carlo standard error cannot be formed
+#' from a single replication.
+#'
 #' @param target_mcse Target Monte Carlo standard error, on the proportion
 #'   scale. For example 0.005 to resolve power to within half a percentage
 #'   point.
-#' @param expected_proportion The proportion being estimated. Defaults to 0.5,
-#'   which is the worst case and therefore the conservative choice; supply the
-#'   anticipated power to get a smaller and still sufficient number.
-#' @return A single integer, the number of replications required.
+#' @param expected_proportion The proportion being estimated, strictly between 0
+#'   and 1. Defaults to 0.5, which maximises the variance and is therefore the
+#'   conservative choice; supply the anticipated power to get a smaller and
+#'   still sufficient number.
+#' @return A single integer of at least 2, the number of replications required.
 #' @references Morris TP, White IR, Crowther MJ. Using simulation studies to
 #'   evaluate statistical methods. Statistics in Medicine. 2019;38(11):2074-2102.
 #'   \doi{10.1002/sim.8086}
@@ -157,14 +223,33 @@ ademp_summary <- function(sim, truth = NULL) {
 #' @export
 nsim_required <- function(target_mcse, expected_proportion = 0.5) {
   if (!is.numeric(target_mcse) || length(target_mcse) != 1L || is.na(target_mcse) ||
-    target_mcse <= 0) {
+    !is.finite(target_mcse) || target_mcse <= 0) {
     stop("`target_mcse` must be a single positive number.", call. = FALSE)
   }
   if (!is.numeric(expected_proportion) || length(expected_proportion) != 1L ||
     is.na(expected_proportion) || expected_proportion < 0 || expected_proportion > 1) {
     stop("`expected_proportion` must be a single number between 0 and 1.", call. = FALSE)
   }
-  as.integer(ceiling(expected_proportion * (1 - expected_proportion) / target_mcse^2))
+  if (expected_proportion == 0 || expected_proportion == 1) {
+    stop(
+      "`expected_proportion` must be strictly between 0 and 1; a proportion of ",
+      format(expected_proportion), " has no Monte Carlo standard error to target ",
+      "and would ask for 0 replications. Use 0.5 for the conservative answer.",
+      call. = FALSE
+    )
+  }
+
+  required <- ceiling(expected_proportion * (1 - expected_proportion) / target_mcse^2)
+  if (required > .Machine$integer.max) {
+    stop(
+      "A target Monte Carlo standard error of ", format(target_mcse), " at a ",
+      "proportion of ", format(expected_proportion), " needs about ",
+      format(required, scientific = TRUE, digits = 3), " replications, more ",
+      "than R can hold in an integer. Ask for a larger `target_mcse`.",
+      call. = FALSE
+    )
+  }
+  as.integer(max(required, 2))
 }
 
 #' Markdown ADEMP skeleton for a scenario

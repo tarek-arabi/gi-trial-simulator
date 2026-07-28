@@ -30,6 +30,72 @@ auc_rank <- function(score, y) {
   (sum(r[y == 1L]) - n1 * (n1 + 1) / 2) / (n1 * n0)
 }
 
+# Complete or quasi-complete separation leaves the binomial log likelihood
+# monotone along some direction of the coefficient space. IRLS walks out along
+# that ridge until the deviance stops moving and then reports success, so
+# `glm`'s own `converged` flag is TRUE while the coefficient it returns is set
+# by the iteration limit rather than by the data, and its standard error has
+# exploded. stats::glm carries no test for this, so detection uses the practical
+# signal: a coefficient far outside any plausible effect paired with a standard
+# error larger still.
+#
+# Both quantities are standardised by the standard deviation of the term's own
+# column of the model matrix, so the rule is scale free: a covariate measured in
+# micrograms is not flagged for its units. The intercept column is constant, so
+# it is compared on the linear predictor scale directly. Both conditions must
+# hold, so a large but well-estimated effect is not flagged; on 400 healthy
+# simulated fits spanning covariate scales from 1e-3 to 1e3 the rule fired zero
+# times.
+gi_separation_estimate_limit <- 8
+gi_separation_se_limit <- 25
+
+separated_terms <- function(model) {
+  cf <- stats::coef(summary(model))
+  if (is.null(cf) || !nrow(cf)) {
+    return(character())
+  }
+  x <- try(stats::model.matrix(model), silent = TRUE)
+  if (inherits(x, "try-error") || is.null(colnames(x))) {
+    return(character())
+  }
+  s <- apply(x, 2L, stats::sd)
+  s[is.na(s) | !is.finite(s) | s == 0] <- 1
+  s <- s[rownames(cf)]
+  s[is.na(s)] <- 1
+  est <- abs(cf[, 1L]) * s
+  se <- cf[, 2L] * s
+  flag <- is.finite(est) & is.finite(se) &
+    est > gi_separation_estimate_limit & se > gi_separation_se_limit
+  rownames(cf)[flag]
+}
+
+# Coefficients glm reports as NA are terms it silently dropped because the
+# design matrix was rank deficient. The model that was fitted is then not the
+# model that was requested, and any quantity computed from the full coefficient
+# vector is undefined.
+aliased_terms <- function(model) {
+  b <- stats::coef(model)
+  if (is.null(b)) {
+    return(character())
+  }
+  nm <- names(b)[is.na(b)]
+  if (is.null(nm)) character() else nm
+}
+
+# Cross-validation folds assigned within outcome class. With unstratified folds
+# a rare-event training set can put every event into one fold, which leaves that
+# fold's model fitted to an outcome with no variation; the out-of-fold score is
+# then not a prediction at all, and the pooled AUC it produces can sit far below
+# 0.5 while looking like an honest discrimination estimate.
+stratified_folds <- function(y, folds) {
+  id <- integer(length(y))
+  for (cls in c(0L, 1L)) {
+    idx <- which(y == cls)
+    id[idx] <- sample(rep_len(seq_len(folds), length(idx)))
+  }
+  id
+}
+
 as_binary_outcome <- function(x, arg) {
   if (inherits(x, "gi_outcome")) x <- x$y
   if (is.factor(x)) {
@@ -56,12 +122,37 @@ as_binary_outcome <- function(x, arg) {
 #' @param formula Optional one-sided formula naming the predictors, for example
 #'   `~ age + bilirubin`. Defaults to `~ .`, every column of `train_cohort`.
 #' @param folds Number of cross-validation folds used for the honest
-#'   discrimination estimate.
+#'   discrimination estimate. Folds are assigned within outcome class, so the
+#'   estimate is only produced when there are at least `folds` events and at
+#'   least `folds` non-events; see the `auc_cv` note under Value.
 #' @param seed Integer seed for the fold assignment.
 #' @return An object of class `gi_prognostic`: a list with `model` (the fitted
 #'   [stats::glm()]), `formula`, `predictors`, `n_train`, `event_rate`,
-#'   `auc_apparent` (in-sample, optimistic), `auc_cv` (out-of-fold, honest),
-#'   `folds`, `seed` and `converged`.
+#'   `auc_apparent` (in-sample, optimistic), `auc_cv`, `oof_score`, `fold_id`,
+#'   `folds`, `seed`, `cv_performed`, `separation` and `converged`.
+#'
+#'   `auc_cv` is the out-of-fold AUC. It is an honest discrimination estimate
+#'   only when every fold holds both events and non-events, so folds are
+#'   assigned within outcome class to guarantee that whenever the class sizes
+#'   allow it. That needs at least `folds` events and at least `folds`
+#'   non-events. `fold_id` returns the assignment actually used, so the
+#'   guarantee can be checked rather than taken on trust. When the training data
+#'   is too rare-event for it to hold, no cross-validation is run: `auc_cv` is
+#'   `NA_real_`, `cv_performed` is `FALSE`, `oof_score` and `fold_id` are all
+#'   `NA`, and a warning reports the two class counts. The alternative would be
+#'   an out-of-fold score built partly from folds whose training set contained
+#'   no events at all, which yields a number that is frequently below 0.5, is
+#'   not a discrimination estimate, and is indistinguishable from one on
+#'   inspection.
+#'
+#'   `converged` is `FALSE` when [stats::glm()] failed to converge **or** when
+#'   the fit shows complete or quasi-complete separation, in which case
+#'   `separation` names the affected terms and a warning is raised. `glm`'s own
+#'   convergence flag is `TRUE` under separation, so it is not sufficient on its
+#'   own. Separation is detected from the standardised coefficient and standard
+#'   error, which is a heuristic and not an exact test: it is deliberately
+#'   conservative, so it will not flag a large but well-estimated effect and can
+#'   miss the mildest quasi-separation.
 #' @seealso [prognostic_score()], [analyse_with_prognostic()], [procova_gain()]
 #' @examples
 #' spec <- cohort_spec(list(
@@ -122,13 +213,52 @@ fit_prognostic <- function(train_cohort, train_outcome, formula = NULL,
   model <- stats::glm(full, data = d, family = stats::binomial())
   predictors <- attr(stats::terms(model), "term.labels")
 
-  set.seed(as.integer(seed))
-  fold_id <- sample(rep_len(seq_len(folds), length(y)))
+  n_event <- sum(y == 1L)
+  n_nonevent <- length(y) - n_event
+  cv_performed <- min(n_event, n_nonevent) >= folds
   oof <- rep(NA_real_, length(y))
-  for (k in seq_len(folds)) {
-    held <- fold_id == k
-    mk <- stats::glm(full, data = d[!held, , drop = FALSE], family = stats::binomial())
-    oof[held] <- stats::predict(mk, newdata = d[held, , drop = FALSE], type = "link")
+  fold_id <- rep(NA_integer_, length(y))
+  if (cv_performed) {
+    set.seed(as.integer(seed))
+    fold_id <- stratified_folds(y, folds)
+    for (k in seq_len(folds)) {
+      held <- fold_id == k
+      mk <- stats::glm(full, data = d[!held, , drop = FALSE], family = stats::binomial())
+      oof[held] <- stats::predict(mk, newdata = d[held, , drop = FALSE], type = "link")
+    }
+  } else {
+    hint <- if (min(n_event, n_nonevent) >= 2L) {
+      paste0(
+        "Set `folds` to at most ", min(n_event, n_nonevent),
+        ", or train on more patients."
+      )
+    } else {
+      "Train on more patients; cross-validation needs at least two of each."
+    }
+    warning(
+      "`auc_cv` is NA: cross-validation was skipped. The training data has ",
+      n_event, " event(s) and ", n_nonevent, " non-event(s), so ", folds,
+      " folds cannot each contain at least one of each. A fold whose training ",
+      "set holds no events produces an out-of-fold score that is not a ",
+      "prediction, and the AUC it yields is meaningless rather than honest. ",
+      hint,
+      call. = FALSE
+    )
+  }
+  auc_cv <- if (cv_performed) auc_rank(oof, y) else NA_real_
+
+  separation <- separated_terms(model)
+  if (length(separation)) {
+    warning(
+      "The prognostic model shows complete or quasi-complete separation on ",
+      paste(separation, collapse = ", "),
+      ": the maximum likelihood estimate does not exist, so the reported ",
+      "coefficients and standard errors are artefacts of the iteration limit ",
+      "rather than estimates. `converged` is FALSE. Drop or coarsen the ",
+      "predictor(s) named, or train on data where the outcome is not perfectly ",
+      "predicted.",
+      call. = FALSE
+    )
   }
 
   structure(
@@ -139,11 +269,14 @@ fit_prognostic <- function(train_cohort, train_outcome, formula = NULL,
       n_train = length(y),
       event_rate = mean(y),
       auc_apparent = auc_rank(stats::predict(model, type = "link"), y),
-      auc_cv = auc_rank(oof, y),
+      auc_cv = auc_cv,
       oof_score = oof,
+      fold_id = fold_id,
       folds = folds,
       seed = as.integer(seed),
-      converged = isTRUE(model$converged)
+      cv_performed = cv_performed,
+      separation = separation,
+      converged = isTRUE(model$converged) && length(separation) == 0L
     ),
     class = c("gi_prognostic", "list")
   )
@@ -157,10 +290,18 @@ print.gi_prognostic <- function(x, ...) {
   )
   cat("predictors: ", paste(x$predictors, collapse = ", "), "\n", sep = "")
   cat(sprintf(
-    "AUC  apparent %.3f   %d-fold cross-validated %.3f\n",
-    x$auc_apparent, x$folds, x$auc_cv
+    "AUC  apparent %.3f   %d-fold cross-validated %s\n",
+    x$auc_apparent, x$folds,
+    if (isFALSE(x$cv_performed)) "NA (too few events to fold)" else sprintf("%.3f", x$auc_cv)
   ))
-  if (!x$converged) cat("WARNING: the fitting algorithm did not converge.\n")
+  if (length(x$separation)) {
+    cat("WARNING: separation on ", paste(x$separation, collapse = ", "),
+      "; those coefficients are not estimable.\n",
+      sep = ""
+    )
+  } else if (!x$converged) {
+    cat("WARNING: the fitting algorithm did not converge.\n")
+  }
   invisible(x)
 }
 
@@ -276,7 +417,24 @@ arm_summary <- function(model, direction, x1, x0) {
 #'   `rd_p_one_sided`; then `se_ratio` (adjusted over unadjusted variance of the
 #'   risk difference, the variance-reduction factor), `se_ratio_logor` (the same
 #'   ratio for the log odds ratio, which normally exceeds 1), `z_ratio`, `n`,
-#'   `n_treatment`, `n_events`, `direction` and `converged`.
+#'   `n_treatment`, `n_events`, `direction`, `separation`, `rank_deficient` and
+#'   `converged`.
+#'
+#'   `converged` is `FALSE` when either [stats::glm()] fit failed to converge,
+#'   when either shows complete or quasi-complete separation, or when either
+#'   design matrix was rank deficient. Each of the latter two raises a warning
+#'   and fills the corresponding element:
+#'
+#'   * `separation` names the terms whose maximum likelihood estimate does not
+#'     exist because the outcome is perfectly predicted. `glm` reports
+#'     convergence in that state, so its own flag is not enough; detection here
+#'     is a conservative heuristic on the standardised coefficient and standard
+#'     error, not an exact test.
+#'   * `rank_deficient` names the terms `glm` dropped because the design matrix
+#'     was not of full rank, the usual cause being a `score` that is a linear
+#'     function of `arm`. The g-computation risk difference is undefined for
+#'     such a fit, so `rd`, `rd_se`, `rd_z`, `rd_p_one_sided` and both
+#'     `se_ratio` values come back `NA`.
 #' @seealso [procova_gain()]
 #' @examples
 #' set.seed(1)
@@ -325,6 +483,33 @@ analyse_with_prognostic <- function(outcome, arm, score,
     x1 = cbind(ones, ones), x0 = cbind(ones, zeros)
   )
 
+  rank_deficient <- unique(c(aliased_terms(m_adj), aliased_terms(m_unadj)))
+  if (length(rank_deficient)) {
+    warning(
+      "The design matrix is rank deficient: glm dropped ",
+      paste(rank_deficient, collapse = ", "),
+      ". The usual cause is a `score` that is a linear function of `arm`, ",
+      "which leaves the treatment effect and the score indistinguishable. ",
+      "The marginal risk difference is undefined for such a fit, so `rd`, ",
+      "`rd_se`, `rd_z`, `rd_p_one_sided` and `se_ratio` are NA and ",
+      "`converged` is FALSE.",
+      call. = FALSE
+    )
+  }
+  separation <- unique(c(separated_terms(m_adj), separated_terms(m_unadj)))
+  if (length(separation)) {
+    warning(
+      "Complete or quasi-complete separation detected on ",
+      paste(separation, collapse = ", "),
+      ": the outcome is perfectly predicted, so the maximum likelihood ",
+      "estimate does not exist and the reported coefficient and standard ",
+      "error are artefacts of the iteration limit rather than estimates. ",
+      "`converged` is FALSE. Treat the p values as uninterpretable and use an ",
+      "exact or penalised method for this data.",
+      call. = FALSE
+    )
+  }
+
   structure(
     list(
       adjusted = adj,
@@ -336,7 +521,10 @@ analyse_with_prognostic <- function(outcome, arm, score,
       n_treatment = sum(a == 1L),
       n_events = sum(y == 1L),
       direction = direction,
-      converged = isTRUE(m_adj$converged) && isTRUE(m_unadj$converged)
+      separation = separation,
+      rank_deficient = rank_deficient,
+      converged = isTRUE(m_adj$converged) && isTRUE(m_unadj$converged) &&
+        length(separation) == 0L && length(rank_deficient) == 0L
     ),
     class = c("gi_adjusted_analysis", "list")
   )
@@ -359,7 +547,21 @@ print.gi_adjusted_analysis <- function(x, ...) {
       nm, r$estimate, r$se, r$p_one_sided, r$rd, r$rd_se, r$rd_p_one_sided
     ))
   }
-  if (!x$converged) cat("WARNING: at least one model did not converge.\n")
+  if (length(x$rank_deficient)) {
+    cat("WARNING: rank deficient; glm dropped ",
+      paste(x$rank_deficient, collapse = ", "), ".\n",
+      sep = ""
+    )
+  }
+  if (length(x$separation)) {
+    cat("WARNING: separation on ", paste(x$separation, collapse = ", "),
+      "; those estimates are not interpretable.\n",
+      sep = ""
+    )
+  }
+  if (!x$converged && !length(x$rank_deficient) && !length(x$separation)) {
+    cat("WARNING: at least one model did not converge.\n")
+  }
   invisible(x)
 }
 
@@ -419,10 +621,36 @@ procova_replicate <- function(spec, coefs, link, n_per_arm, a0, delta, fit,
 #' Efficiency gain from prognostic covariate adjustment
 #'
 #' Simulates the same trial twice, unadjusted and adjusted for a frozen
-#' prognostic score, on identical simulated data, and reports what the
-#' adjustment buys. The prognostic model is trained once on `train_n` simulated
-#' historical control-arm patients and then held fixed across every replicate,
-#' which is how PROCOVA is actually deployed.
+#' prognostic score, on identical simulated data, and reports the difference.
+#' The prognostic model is trained once on `train_n` simulated historical
+#' control-arm patients and then held fixed across every replicate, which
+#' reproduces the freezing step PROCOVA requires.
+#'
+#' **Every efficiency number this function reports is an upper bound, not the
+#' gain a real trial should expect.** The prognostic model is fitted with
+#' `stats::reformulate(names(coefs))`, that is, on exactly the covariates that
+#' generate the outcome, through the same link, with nothing omitted and nothing
+#' spurious added. It is correctly specified by construction and differs from
+#' the true outcome model only by estimation error on `train_n` patients. That
+#' is the best case, not the deployed case.
+#'
+#' A deployed prognostic model is not in that position. It is trained on
+#' historical patients from a different time, place and standard of care; the
+#' covariates it can measure are proxies for the ones that actually drive the
+#' outcome; and its functional form is chosen rather than known. It is
+#' misspecified relative to the trial's outcome model, so its score is less
+#' prognostic and the variance reduction it achieves is smaller. Nothing here
+#' estimates how much smaller, because that depends on the degree of
+#' misspecification, which this simulation does not model: `coefs` fixes the
+#' true outcome model and the prognostic model together, so the two cannot be
+#' made to disagree through this interface. To study a misspecified score,
+#' build the study by hand from [fit_prognostic()] and
+#' [analyse_with_prognostic()], giving the prognostic fit a formula that omits
+#' or mismeasures a true driver.
+#'
+#' Read `se_ratio` and `n_reduction` as the ceiling a perfectly specified score
+#' could reach, report them with that qualifier attached, and plan against a
+#' more conservative figure.
 #'
 #' Read the efficiency measures carefully, because for a binary outcome two of
 #' them point in opposite directions and only one comparison is legitimate.
@@ -443,11 +671,26 @@ procova_replicate <- function(spec, coefs, link, n_per_arm, a0, delta, fit,
 #' this number as evidence that adjustment hurts would be comparing the
 #' precision of two different estimands.
 #'
-#' `information_ratio` is the same efficiency gain read off the log odds ratio
-#' Wald test instead: the squared ratio of the mean test statistics under the
-#' alternative, `(mean(z_adjusted) / mean(z_unadjusted))^2`. Required sample size
-#' scales inversely with squared noncentrality, so it should agree with
-#' `1 / se_ratio`, and the two are reported together as a cross-check.
+#' `information_ratio` reads an efficiency gain off the log odds ratio Wald test
+#' instead: the squared ratio of the mean test statistics under the alternative,
+#' `(mean(z_adjusted) / mean(z_unadjusted))^2`. Required sample size scales
+#' inversely with squared noncentrality, so this is a sample size ratio too.
+#'
+#' It is tempting to read `information_ratio` against `1 / se_ratio` as a
+#' cross-check, and the print method shows them side by side, but the agreement
+#' is conditional and the condition is easy to violate. `information_ratio` is a
+#' log odds ratio quantity while `se_ratio` is a risk difference quantity, and
+#' the two estimands carry the same efficiency only in the limit of a vanishing
+#' treatment effect, where non-collapsibility is a second-order term. Under a
+#' local alternative they match: at the log odds ratio of about -0.53 the
+#' package tests use, 4000 replicates put the gap at roughly 2 Monte Carlo
+#' standard errors, which is noise. Away from it they do not: at a log odds
+#' ratio near -1.4 `information_ratio` sits about 5 percent below `1 / se_ratio`
+#' and at -2.2 about 10 percent below, in both cases tens of Monte Carlo
+#' standard errors out, systematically and reproducibly. So treat a gap as
+#' informative only when the treatment effect is small. At a large effect a gap
+#' is the expected behaviour of two different estimands and says nothing about
+#' whether either number is right.
 #'
 #' @param scenario A `gi_scenario` from [scenario()], supplying the control and
 #'   treatment event rates, the direction of benefit and the default alpha.
@@ -468,7 +711,9 @@ procova_replicate <- function(spec, coefs, link, n_per_arm, a0, delta, fit,
 #' @param link One of `"logit"`, `"probit"` or `"cloglog"`, for the true
 #'   data-generating model.
 #' @param folds Cross-validation folds used when reporting the prognostic
-#'   model's honest discrimination.
+#'   model's honest discrimination. If the training cohort has fewer than
+#'   `folds` events, [fit_prognostic()] warns and the reported CV AUC is `NA`;
+#'   the simulation itself is unaffected.
 #' @param calibrate_n Size of the reference cohort used to solve for the
 #'   intercepts that reproduce the scenario's marginal event rates.
 #' @return An object of class `gi_procova`: a list with the inputs, the fitted
@@ -482,6 +727,13 @@ procova_replicate <- function(spec, coefs, link, n_per_arm, a0, delta, fit,
 #'   standard errors of both estimators on both scales, the achieved marginal
 #'   event rates, the count of non-converged replicates, and the full
 #'   `replicates` matrix for further ADEMP summaries.
+#'
+#'   `se_ratio`, `n_reduction`, `se_ratio_logor` and `information_ratio` are
+#'   upper bounds on the efficiency gain, obtained with a prognostic model that
+#'   is correctly specified by construction; see the description above for why a
+#'   deployed model does less well. `n_nonconverged` counts replicates whose fit
+#'   failed to converge, showed separation, or had a rank deficient design
+#'   matrix.
 #' @seealso [fit_prognostic()], [analyse_with_prognostic()]
 #' @examples
 #' spec <- cohort_spec(list(
@@ -657,8 +909,14 @@ print.gi_procova <- function(x, ...) {
     x$n_per_arm, x$nsim, x$alpha
   ))
   cat(sprintf(
-    "prognostic score: %d-fold CV AUC %.3f (trained on n = %d)\n",
-    x$prognostic$folds, x$prognostic$auc_cv, x$prognostic$n_train
+    "prognostic score: %d-fold CV AUC %s (trained on n = %d)\n",
+    x$prognostic$folds,
+    if (isFALSE(x$prognostic$cv_performed)) {
+      "NA (too few events to fold)"
+    } else {
+      sprintf("%.3f", x$prognostic$auc_cv)
+    },
+    x$prognostic$n_train
   ))
   cat("                          unadjusted        adjusted\n")
   cat(sprintf(
@@ -686,13 +944,19 @@ print.gi_procova <- function(x, ...) {
     x$se_ratio, x$se_ratio_mcse
   ))
   cat(sprintf(
-    "  implying a %.1f%% sample size reduction at equal power.\n",
+    "  implying a %.1f%% sample size reduction at equal power, an upper bound\n",
     100 * x$n_reduction
   ))
+  cat("  obtained with a correctly specified prognostic model.\n")
   cat(sprintf(
-    "cross-check: information ratio %.3f (%.3f) versus 1 / variance ratio %.3f\n",
-    x$information_ratio, x$information_ratio_mcse, 1 / x$se_ratio
+    "local-alternative cross-check: information ratio %.3f (%.3f) versus\n",
+    x$information_ratio, x$information_ratio_mcse
   ))
+  cat(sprintf(
+    "  1 / variance ratio %.3f; these agree only for a small treatment effect,\n",
+    1 / x$se_ratio
+  ))
+  cat("  so a gap at a large effect is expected, not a fault.\n")
   cat(sprintf(
     "log odds ratio SE ratio %.3f (%.3f); above 1 is expected for a binary\n",
     x$se_ratio_logor, x$se_ratio_logor_mcse

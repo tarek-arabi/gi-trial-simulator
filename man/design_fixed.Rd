@@ -32,6 +32,13 @@ shared contract (\code{type}, \code{scenario}, \code{alpha}, \code{power}, \code
 \code{n_treatment}, \code{allocation_ratio}, \code{direction_upper} and the z-scale
 \code{critical_value}.
 
+\code{n_total} is always the sum of the two arm sizes. \code{n_per_arm} is the
+common arm size and is defined only under 1:1 allocation; when
+\code{allocation_ratio} is anything else the arms differ and \code{n_per_arm} is
+\code{NA_real_}, so that code which assumes balanced arms fails rather than
+quietly using the wrong number. Read \code{detail$n_treatment} and
+\code{detail$n_control} when allocation may be unequal.
+
 \code{x}, invisibly.
 }
 \description{

@@ -8,7 +8,6 @@ benchmark_report(
   k = 2:5,
   types = c("OF", "P", "asOF", "asP"),
   alpha = 0.025,
-  beta = 0.1,
   tolerance = 1e-04
 )
 }
@@ -19,8 +18,6 @@ benchmark_report(
 \code{"P"}, \code{"asOF"} and \code{"asP"}.}
 
 \item{alpha}{One-sided type I error rate.}
-
-\item{beta}{Type II error rate.}
 
 \item{tolerance}{Absolute z-scale difference at or below which the two
 engines are treated as agreeing.}

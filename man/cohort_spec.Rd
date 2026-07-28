@@ -9,9 +9,14 @@ cohort_spec(covariates, correlation = NULL)
 \arguments{
 \item{covariates}{A list of \code{gi_covariate} objects (or a single one).}
 
-\item{correlation}{Target correlation matrix on the latent normal scale, with
-rows and columns in the order of \code{covariates} or carrying their names.
-Defaults to the identity, meaning independent covariates.}
+\item{correlation}{Target correlation matrix on the latent normal scale.
+Either name both dimensions, in which case the matrix may be in any order
+and is reordered to match \code{covariates}, or name neither, in which case it
+is read positionally in the order of \code{covariates}. A matrix carrying only
+\code{rownames} or only \code{colnames} is rejected: its intended ordering is
+ambiguous, and reading it positionally would silently pair covariates with
+the wrong correlations. Defaults to the identity, meaning independent
+covariates.}
 }
 \value{
 An object of class \code{gi_cohort_spec}: a list with \code{covariates},

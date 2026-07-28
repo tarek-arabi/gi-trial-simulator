@@ -7,8 +7,28 @@
 #' @name group-sequential-designs
 NULL
 
-# rpact reports -6 in futilityBounds when no futility boundary was requested.
+# rpact reports -6 in futilityBounds when no futility boundary applies, and
+# clamps any bound it computes below that floor back up onto it.
 GI_RPACT_NO_FUTILITY <- -6
+
+# The clamp is not exact from below. A look whose beta spend is numerically
+# zero can come back marginally above -6 instead of on it: with
+# type_of_design = "asP" and information_rates = c(0.0573, 1), rpact 4.2
+# returns futilityBounds = -5.98780. An exact `<= -6` test lets that through
+# and the package then reports a futility bound of about -6 as if a data
+# monitoring committee could act on it. Nothing in this window is a usable
+# rule: a standard normal falls below -5.9 with probability 1.8e-9, so no
+# trial that could be run would ever cross it. Bounds within this tolerance of
+# the floor are reported as absent, which does discard a genuine bound in
+# (-6, -5.9], deliberately, because reporting one as a futility rule is the
+# more misleading of the two errors.
+GI_RPACT_NO_FUTILITY_TOL <- 0.1
+
+# TRUE where rpact's futility bound is the floor rather than a rule, including
+# NA and non-finite entries.
+gi_futility_absent <- function(z) {
+  !is.finite(z) | z <= GI_RPACT_NO_FUTILITY + GI_RPACT_NO_FUTILITY_TOL
+}
 
 gi_check_type_of_design <- function(type_of_design) {
   allowed <- c("asOF", "asP", "OF", "P")
@@ -47,6 +67,33 @@ gi_check_information_rates <- function(information_rates, k) {
   information_rates
 }
 
+# Structurally valid information rates can still buy nothing. An
+# O'Brien-Fleming-type spending function spends effectively no alpha before
+# about information rate 0.1, and rpact answers with an infinite critical
+# value: at information_rates = c(0.02, 0.5, 1) the first analysis gets
+# efficacy_z = Inf on 63 patients. Nothing crosses an infinite bound, and if
+# the beta spending is also at its floor there is no futility bound either, so
+# that analysis cannot end the trial in any direction. Sizing a data monitoring
+# committee meeting that can only ever say "continue" is a design error, so it
+# is refused rather than returned.
+gi_check_analyses_can_stop <- function(efficacy_z, futility_z, info,
+                                       type_of_design) {
+  dead <- !is.finite(efficacy_z) & gi_futility_absent(futility_z)
+  if (!any(dead)) {
+    return(invisible(NULL))
+  }
+  first <- which(dead)[1]
+  stop(
+    "Analysis ", first, " at information rate ", signif(info[first], 4),
+    " cannot stop the trial: with type_of_design '", type_of_design,
+    "' rpact returns an infinite efficacy boundary there and no futility ",
+    "bound applies, so the analysis can only ever say continue. Move the ",
+    "analysis later, or choose a spending function that spends alpha ",
+    "earlier, such as type_of_design = 'asP'.",
+    call. = FALSE
+  )
+}
+
 #' Size a group-sequential two-arm superiority trial
 #'
 #' Builds the boundaries with [rpact::getDesignGroupSequential()] and the
@@ -76,7 +123,20 @@ gi_check_information_rates <- function(information_rates, k) {
 #'   `information_rates`, `n_cumulative`, `cumulative_alpha_spent`,
 #'   `expected_n_h0`, `expected_n_h1`, `expected_n_h01`, `k`,
 #'   `type_of_design`, `futility`, `binding_futility`, the unrounded
-#'   `n_fixed`, and the underlying `rpact_design` and `rpact_sample_size`.
+#'   `n_fixed`, the rounded `n_control` and `n_treatment`, `allocation_ratio`,
+#'   `direction_upper`, and the underlying `rpact_design` and
+#'   `rpact_sample_size`.
+#'
+#'   `n_total` is the maximum sample size, always the sum of the two arm
+#'   sizes. `n_per_arm` is the common arm size and is defined only under 1:1
+#'   allocation; when `allocation_ratio` is anything else the arms differ and
+#'   `n_per_arm` is `NA_real_`, so that code which assumes balanced arms fails
+#'   rather than quietly using the wrong number. Read `detail$n_treatment` and
+#'   `detail$n_control` when allocation may be unequal.
+#'
+#'   `detail$futility_z` is `NA` at every analysis with no usable futility
+#'   bound, which includes the final analysis and any analysis where rpact
+#'   returns its no-futility floor of -6.
 #' @seealso [gs_boundaries()], [design_fixed()]
 #' @examples
 #' d <- design_group_sequential(scenario("ercp_acute_cholangitis"), k = 3)
@@ -140,9 +200,12 @@ design_group_sequential <- function(scenario, alpha = NULL, power = NULL, k = 3,
   futility_z <- rep(NA_real_, k)
   if (!identical(futility, "none")) {
     bounds <- as.numeric(rpact_design$futilityBounds)
-    bounds[bounds <= GI_RPACT_NO_FUTILITY] <- NA_real_
+    bounds[gi_futility_absent(bounds)] <- NA_real_
     futility_z[seq_len(k - 1L)] <- bounds
   }
+
+  efficacy_z <- as.numeric(rpact_design$criticalValues)
+  gi_check_analyses_can_stop(efficacy_z, futility_z, info, type_of_design)
 
   structure(
     list(
@@ -161,7 +224,7 @@ design_group_sequential <- function(scenario, alpha = NULL, power = NULL, k = 3,
         futility = futility,
         binding_futility = isTRUE(binding),
         information_rates = info,
-        efficacy_z = as.numeric(rpact_design$criticalValues),
+        efficacy_z = efficacy_z,
         futility_z = futility_z,
         cumulative_alpha_spent = as.numeric(rpact_design$alphaSpent),
         n_cumulative = n_cumulative,
@@ -186,7 +249,9 @@ design_group_sequential <- function(scenario, alpha = NULL, power = NULL, k = 3,
 #' @return A data frame with one row per analysis and columns `analysis`,
 #'   `information_rate`, `n_cumulative`, `efficacy_z`, `futility_z` and
 #'   `cumulative_alpha_spent`. `futility_z` is `NA` where no futility bound
-#'   applies, including at the final analysis, where rpact reports none.
+#'   applies: at the final analysis, where rpact reports none, at every
+#'   analysis of an efficacy-only design, and at any analysis where rpact
+#'   returns its no-futility floor of -6.
 #' @seealso [design_group_sequential()]
 #' @examples
 #' gs_boundaries(design_group_sequential(scenario("ercp_acute_cholangitis")))

@@ -56,6 +56,10 @@ mortality is handled without the caller flipping any signs.
 The estimate carries Monte Carlo error of at most \code{0.5 / sqrt(draws)}, so
 4000 draws gives a standard error under 0.008 and 100000 draws under 0.0016.
 Choose \code{draws} against the decision thresholds the value will be compared to.
+When the value drives a stopping rule that error becomes a bias in the
+decision rather than noise around it, which is why \code{\link[=design_bayesian]{design_bayesian()}}
+enforces a minimum: see the \code{post_draws} entry there for the rule and for
+what happens below it.
 }
 \examples{
 posterior_prob_better(events_t = 5, n_t = 50, events_c = 12, n_c = 50, seed = 42)

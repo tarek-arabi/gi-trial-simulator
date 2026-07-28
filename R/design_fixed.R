@@ -92,6 +92,14 @@ gi_resolve_defaults <- function(scenario, alpha, power, allocation_ratio) {
 
 # Per-arm sizes are rounded up so that no arm is under-recruited. With 1:1
 # allocation this makes the total an even integer by construction.
+#
+# `n_per_arm` is only meaningful when the two arms are the same size, so it is
+# NA under unequal allocation. It used to be max(n_treatment, n_control),
+# which reads as a plausible number and is silently wrong: a consumer that
+# recruits n_per_arm into both arms runs a larger, balanced trial than the one
+# that was sized, and overstates power by several percentage points. NA makes
+# every such consumer fail loudly instead. The arm sizes themselves are always
+# carried in `n_treatment` and `n_control`.
 gi_round_arms <- function(n_treatment_raw, n_control_raw) {
   n_treatment <- ceiling(n_treatment_raw)
   n_control <- ceiling(n_control_raw)
@@ -99,7 +107,7 @@ gi_round_arms <- function(n_treatment_raw, n_control_raw) {
     n_treatment = n_treatment,
     n_control = n_control,
     n_total = n_treatment + n_control,
-    n_per_arm = max(n_treatment, n_control)
+    n_per_arm = if (isTRUE(n_treatment == n_control)) n_treatment else NA_real_
   )
 }
 
@@ -121,6 +129,13 @@ gi_round_arms <- function(n_treatment_raw, n_control_raw) {
 #'   `rpact_sample_size`, the unrounded `n_fixed`, the rounded `n_control` and
 #'   `n_treatment`, `allocation_ratio`, `direction_upper` and the z-scale
 #'   `critical_value`.
+#'
+#'   `n_total` is always the sum of the two arm sizes. `n_per_arm` is the
+#'   common arm size and is defined only under 1:1 allocation; when
+#'   `allocation_ratio` is anything else the arms differ and `n_per_arm` is
+#'   `NA_real_`, so that code which assumes balanced arms fails rather than
+#'   quietly using the wrong number. Read `detail$n_treatment` and
+#'   `detail$n_control` when allocation may be unequal.
 #' @seealso [design_group_sequential()], [power_at()]
 #' @examples
 #' d <- design_fixed(scenario("ercp_acute_cholangitis"))
@@ -182,8 +197,21 @@ design_fixed <- function(scenario, alpha = NULL, power = NULL,
 #' @param design A `gi_design` of type `"fixed"` or `"group_sequential"`.
 #' @param control_rate Control-arm event probability, in (0, 1).
 #' @param treatment_rate Treatment-arm event probability, in (0, 1).
-#' @return A single number: the probability of rejecting the null in the
-#'   direction of treatment superiority, given the design's total sample size.
+#' @return A single number, rpact's `overallReject`: the probability that the
+#'   trial crosses an efficacy boundary in the direction of treatment
+#'   superiority, given the design's total sample size and allocation ratio.
+#'
+#'   For a design built with `futility = "nonbinding_obf"` or
+#'   `"binding_obf"` this is a probability of reaching efficacy *without having
+#'   stopped for futility first*, because rpact applies the futility bounds
+#'   when it propagates the trial forward. It is therefore not the type I error
+#'   rate of the design when the futility bounds are non-binding: evaluated at
+#'   equal rates, a non-binding O'Brien-Fleming futility design returns roughly
+#'   0.023 rather than its 0.025 alpha, since the replicates that would have
+#'   gone on to reject after crossing a futility bound have been removed. A
+#'   sponsor who declines to act on a non-binding bound retains the full alpha,
+#'   which this function does not report. Use `futility = "none"` to see the
+#'   efficacy-only quantity.
 #' @seealso [design_fixed()]
 #' @examples
 #' d <- design_fixed(scenario("ercp_acute_cholangitis"))
@@ -245,12 +273,28 @@ print.gi_design <- function(x, ...) {
     x$alpha,
     if (is.null(x$power) || is.na(x$power)) "by simulation" else sprintf("%.3f", x$power)
   ))
-  cat(sprintf(
-    "  maximum n %s total, %s per arm\n",
-    format(x$n_total, big.mark = ","), format(x$n_per_arm, big.mark = ",")
-  ))
-
   d <- x$detail %||% list()
+  n_per_arm <- x$n_per_arm
+  balanced <- length(n_per_arm) == 1L && !is.na(n_per_arm)
+  if (balanced) {
+    cat(sprintf(
+      "  maximum n %s total, %s per arm\n",
+      format(x$n_total, big.mark = ","), format(n_per_arm, big.mark = ",")
+    ))
+  } else if (!is.null(d$n_treatment) && !is.null(d$n_control)) {
+    cat(sprintf(
+      "  maximum n %s total, %s treatment / %s control\n",
+      format(x$n_total, big.mark = ","),
+      format(d$n_treatment, big.mark = ","),
+      format(d$n_control, big.mark = ",")
+    ))
+  } else {
+    cat(sprintf(
+      "  maximum n %s total, arms unequal\n",
+      format(x$n_total, big.mark = ",")
+    ))
+  }
+
   if (!is.null(d$efficacy_z)) {
     tab <- data.frame(
       analysis = seq_along(d$efficacy_z),

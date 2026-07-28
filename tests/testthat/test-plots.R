@@ -76,6 +76,95 @@ test_that("plot_power_curve draws a Monte Carlo band only when an MCSE column ex
   expect_length(without$layers, 2L)
 })
 
+test_that("plot_power_curve keeps a point whose Monte Carlo standard error is missing", {
+  skip_if_not_installed("ggplot2")
+  grid <- data.frame(
+    n = c(500, 1000, 1500, 2000),
+    power = c(0.31, 0.55, 0.71, 0.82),
+    power_mcse = c(0.015, NA, 0.01, 0.01)
+  )
+  p <- plot_power_curve(grid, x = "n", y = "power")
+  expect_untitled_ggplot(p)
+
+  # The row with no MCSE loses its band, never its point and line segment.
+  expect_equal(nrow(p$data), 4L)
+  expect_equal(p$data$gi_x, grid$n)
+  expect_equal(p$data$gi_y, grid$power)
+
+  built <- ggplot2::ggplot_build(p)
+  expect_equal(nrow(built$data[[1]]), 3L) # ribbon skips the row with no MCSE
+  expect_equal(nrow(built$data[[2]]), 4L) # line spans every row
+  expect_equal(nrow(built$data[[3]]), 4L) # so does the point series
+})
+
+test_that("plot_power_curve keeps grouped points whose MCSE is missing", {
+  skip_if_not_installed("ggplot2")
+  grid <- data.frame(
+    n = rep(c(500, 1000, 1500), 2),
+    power = c(0.30, 0.50, 0.70, 0.20, 0.40, 0.60),
+    power_mcse = c(0.01, NA, 0.01, 0.01, 0.01, 0.01),
+    design = rep(c("Fixed", "Group sequential"), each = 3),
+    stringsAsFactors = FALSE
+  )
+  p <- plot_power_curve(grid, x = "n", y = "power", group = "design")
+  built <- ggplot2::ggplot_build(p)
+  expect_equal(nrow(p$data), 6L)
+  expect_equal(nrow(built$data[[1]]), 5L)
+  expect_equal(nrow(built$data[[3]]), 6L)
+  expect_equal(sum(p$data$gi_group == "Fixed"), 3L)
+})
+
+test_that("plot_power_curve blames the column that is actually unplottable", {
+  skip_if_not_installed("ggplot2")
+  # Every MCSE missing is a curve without a band, not an error about x and y.
+  all_na_mcse <- data.frame(
+    n = c(500, 1000, 1500),
+    power = c(0.31, 0.55, 0.71),
+    power_mcse = rep(NA_real_, 3)
+  )
+  p <- plot_power_curve(all_na_mcse, x = "n", y = "power")
+  expect_untitled_ggplot(p)
+  expect_equal(nrow(p$data), 3L)
+  expect_length(p$layers, 2L)
+
+  # When a column really is unplottable the message names that column alone.
+  msg_y <- tryCatch(
+    plot_power_curve(
+      data.frame(n = c(500, 1000), power = rep(NA_real_, 2)),
+      x = "n", y = "power"
+    ),
+    error = conditionMessage
+  )
+  expect_match(msg_y, "'power'", fixed = TRUE)
+  expect_false(grepl("'n'", msg_y, fixed = TRUE))
+
+  msg_x <- tryCatch(
+    plot_power_curve(
+      data.frame(n = rep(NA_real_, 2), power = c(0.3, 0.5)),
+      x = "n", y = "power"
+    ),
+    error = conditionMessage
+  )
+  expect_match(msg_x, "'n'", fixed = TRUE)
+  expect_false(grepl("'power'", msg_x, fixed = TRUE))
+})
+
+test_that("plot_power_curve refuses a negative Monte Carlo standard error", {
+  skip_if_not_installed("ggplot2")
+  bad <- data.frame(
+    n = c(500, 1000),
+    power = c(0.5, 0.6),
+    power_mcse = c(-1, 0.01)
+  )
+  expect_error(plot_power_curve(bad, x = "n", y = "power"), "negative")
+  expect_error(plot_power_curve(bad, x = "n", y = "power"), "power_mcse")
+
+  ok <- bad
+  ok$power_mcse <- c(0.01, 0.01)
+  band <- ggplot2::ggplot_build(plot_power_curve(ok, x = "n", y = "power"))$data[[1]]
+  expect_true(all(band$ymin <= band$ymax))
+})
+
 test_that("plot_power_curve errors informatively on a missing column", {
   skip_if_not_installed("ggplot2")
   grid <- fake_grid()
@@ -118,7 +207,7 @@ test_that("plot_operating_characteristics handles NA target power on adaptive de
 
   values <- p$data
   adaptive_power <- values$gi_value[values$gi_label == "Adaptive" &
-    values$gi_measure == "Power"]
+    values$gi_measure == "Power (simulated)"]
   expect_equal(adaptive_power, 0.88)
   expect_false(any(is.na(values$gi_value)))
   expect_true(all(c("Analytic", "Simulated") %in% levels(values$gi_kind)))
@@ -140,6 +229,96 @@ test_that("plot_operating_characteristics drops an empty measure and validates i
 
   expect_error(plot_operating_characteristics(list()), "non-empty list")
   expect_error(plot_operating_characteristics(list(1, 2)), "gi_design")
+})
+
+test_that("plot_operating_characteristics never shares a panel between target and achieved power", {
+  skip_if_not_installed("ggplot2")
+  designs <- list(
+    Fixed = fake_design("fixed", 0.9, 3400),
+    Adaptive = fake_design(
+      "bayesian_adaptive", NA_real_, 3400,
+      detail = list(simulated_power = 0.88, expected_n = 2450)
+    )
+  )
+  p <- plot_operating_characteristics(designs)
+  expect_untitled_ggplot(p)
+
+  power_rows <- p$data[grepl("^Power", as.character(p$data$gi_measure)), ]
+  expect_equal(nrow(power_rows), 2L)
+  # A target that was solved for and a power that was simulated are different
+  # quantities, so they must not land on one axis.
+  expect_equal(length(unique(as.character(power_rows$gi_measure))), 2L)
+  expect_identical(
+    as.character(power_rows$gi_measure[power_rows$gi_label == "Fixed"]),
+    "Power (analytic target)"
+  )
+  expect_identical(
+    as.character(power_rows$gi_measure[power_rows$gi_label == "Adaptive"]),
+    "Power (simulated)"
+  )
+  # Every power panel says where its numbers came from.
+  panels <- grep("^Power", levels(droplevels(p$data$gi_measure)), value = TRUE)
+  expect_true(all(grepl("analytic target|simulated", panels)))
+
+  # A design set with one kind of power still labels its source honestly.
+  lone <- plot_operating_characteristics(list(Fixed = fake_design("fixed", 0.9, 3400)))
+  expect_true(
+    "Power (analytic target)" %in% levels(droplevels(lone$data$gi_measure))
+  )
+  expect_false("Power" %in% levels(droplevels(lone$data$gi_measure)))
+})
+
+test_that("plot_operating_characteristics finds achieved power under every documented name", {
+  skip_if_not_installed("ggplot2")
+  for (nm in c("simulated_power", "empirical_power", "power", "prob_reject")) {
+    d <- fake_design(
+      "bayesian_adaptive", NA_real_, 3400,
+      detail = stats::setNames(list(0.88), nm)
+    )
+    p <- plot_operating_characteristics(list(Adaptive = d))
+    expect_equal(
+      p$data$gi_value[p$data$gi_measure == "Power (simulated)"], 0.88
+    )
+  }
+})
+
+test_that("plot_operating_characteristics reads expected n under every documented name", {
+  skip_if_not_installed("ggplot2")
+  documented <- c(
+    "expected_n", "expected_sample_size", "expected_n_total",
+    "expected_n_alt", "expected_n_h1", "en", "asn", "ess"
+  )
+  for (nm in documented) {
+    d <- fake_design(
+      "group_sequential", 0.9, 3400,
+      detail = stats::setNames(list(2450), nm)
+    )
+    p <- plot_operating_characteristics(list(GS = d))
+    expect_equal(p$data$gi_value[p$data$gi_measure == "Expected n"], 2450)
+  }
+})
+
+test_that("a simulated bayesian design lands in the simulated power panel", {
+  skip_if_not_installed("ggplot2")
+  skip_if(is.null(get0("design_bayesian", mode = "function")))
+  skip_if(is.null(get0("scenario", mode = "function")))
+
+  design <- design_bayesian(
+    scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15),
+    n_max = 100, looks = 2, nsim = 60, post_draws = 1200, seed = 7
+  )
+  expect_false(is.na(design$power))
+
+  p <- plot_operating_characteristics(list(Bayesian = design))
+  expect_untitled_ggplot(p)
+  row <- p$data[p$data$gi_measure == "Power (simulated)", , drop = FALSE]
+  expect_equal(nrow(row), 1L)
+  expect_equal(row$gi_value, design$power)
+  expect_identical(as.character(row$gi_kind), "Simulated")
+  # Its power was simulated, so it is never presented as an analytic target.
+  expect_false(
+    "Power (analytic target)" %in% levels(droplevels(p$data$gi_measure))
+  )
 })
 
 test_that("plot_boundaries plots efficacy with and without a futility column", {
@@ -206,6 +385,51 @@ test_that("plot_evsi errors when the curve has no usable columns", {
   expect_error(plot_evsi("nope"), "data.frame")
 })
 
+test_that("plot_evsi keeps a point whose standard error is missing", {
+  skip_if_not_installed("ggplot2")
+  curve <- data.frame(
+    n_per_arm = c(200, 400, 600),
+    evsi = c(1e5, 2e5, 3e5),
+    se = c(9000, NA, 9000)
+  )
+  p <- plot_evsi(curve)
+  expect_untitled_ggplot(p)
+  expect_equal(nrow(p$data), 3L)
+
+  built <- ggplot2::ggplot_build(p)
+  expect_equal(nrow(built$data[[1]]), 2L) # ribbon skips the row with no SE
+  expect_equal(nrow(built$data[[2]]), 3L) # curve keeps it
+
+  # A curve whose standard errors are all missing is drawn as a bare line.
+  curve$se <- rep(NA_real_, 3)
+  bare <- plot_evsi(curve)
+  expect_equal(nrow(bare$data), 3L)
+  expect_length(bare$layers, 1L)
+})
+
+test_that("plot_evsi refuses uncertainty that runs downwards", {
+  skip_if_not_installed("ggplot2")
+  negative_se <- data.frame(
+    n_per_arm = c(200, 400),
+    evsi = c(1e5, 2e5),
+    se = c(-9000, 9000)
+  )
+  expect_error(plot_evsi(negative_se), "negative")
+  expect_error(plot_evsi(negative_se), "'se'")
+
+  inverted <- data.frame(
+    n_per_arm = c(200, 400),
+    evsi = c(1e5, 2e5),
+    ci_lower = c(2e5, 3e5),
+    ci_upper = c(0, 1e5)
+  )
+  expect_error(plot_evsi(inverted), "cannot run downwards")
+
+  negative_se$se <- c(9000, 9000)
+  band <- ggplot2::ggplot_build(plot_evsi(negative_se))$data[[1]]
+  expect_true(all(band$ymin <= band$ymax))
+})
+
 test_that("plot_emulator_surface draws a supported surface with training points", {
   skip_if_not_installed("ggplot2")
   fit <- fake_emulator()
@@ -242,6 +466,48 @@ test_that("plot_emulator_surface validates bounds and grid size", {
     plot_emulator_surface(function(newdata) 1, good, n_grid = 5),
     "predictions for 25 grid points"
   )
+})
+
+test_that("plot_emulator_surface rejects a fractional n_grid rather than truncating it", {
+  skip_if_not_installed("ggplot2")
+  fit <- fake_emulator()
+  good <- list(n_per_arm = c(200, 2000), control_rate = c(0.03, 0.10))
+
+  expect_error(plot_emulator_surface(fit, good, n_grid = 2.9), "whole number")
+  expect_error(plot_emulator_surface(fit, good, n_grid = 5.5), "whole number")
+  expect_error(plot_emulator_surface(fit, good, n_grid = Inf), "whole number")
+  expect_error(plot_emulator_surface(fit, good, n_grid = NA_real_), "whole number")
+
+  # A whole number still gives exactly the grid that was asked for.
+  expect_equal(nrow(plot_emulator_surface(fit, good, n_grid = 3)$data), 9L)
+  expect_equal(nrow(plot_emulator_surface(fit, good, n_grid = 4L)$data), 16L)
+})
+
+test_that("plot_emulator_surface rejects a grid with no finite prediction", {
+  skip_if_not_installed("ggplot2")
+  good <- list(n_per_arm = c(200, 2000), control_rate = c(0.03, 0.10))
+
+  # Infinite is not missing, and neither can be drawn.
+  expect_error(
+    plot_emulator_surface(function(newdata) rep(Inf, nrow(newdata)), good, n_grid = 4),
+    "no finite predictions"
+  )
+  expect_error(
+    plot_emulator_surface(function(newdata) rep(-Inf, nrow(newdata)), good, n_grid = 4),
+    "no finite predictions"
+  )
+  expect_error(
+    plot_emulator_surface(function(newdata) rep(NA_real_, nrow(newdata)), good, n_grid = 4),
+    "no finite predictions"
+  )
+
+  # A surface with some finite predictions is still worth drawing.
+  partial <- plot_emulator_surface(
+    function(newdata) ifelse(newdata$n_per_arm > 1000, Inf, 0.5), good,
+    n_grid = 4
+  )
+  expect_s3_class(partial, "ggplot")
+  expect_equal(nrow(partial$data), 16L)
 })
 
 test_that("plot_boundaries reads a real group-sequential design", {
@@ -338,4 +604,24 @@ test_that("save_figure writes a file at the requested size", {
   expect_error(save_figure("not a plot", path), "ggplot object")
   expect_error(save_figure(p, character()), "'path'")
   expect_error(save_figure(p, path, width = 0), "'width'")
+})
+
+test_that("the exported colourblind-safe scales cover the levels asked for", {
+  skip_if_not_installed("ggplot2")
+
+  expect_s3_class(scale_colour_gi(3), "ScaleDiscrete")
+  expect_s3_class(scale_fill_gi(2), "ScaleDiscrete")
+
+  # Within the palette the colours are the Okabe and Ito values, not ggplot2's
+  # default hue wheel, which puts red and green adjacent and is not safe.
+  expect_identical(scale_colour_gi(3)$palette(3), c("#0072B2", "#D55E00", "#009E73"))
+  expect_identical(scale_fill_gi(2)$palette(2), c("#0072B2", "#D55E00"))
+
+  # Past the palette's eight entries it has to fall back to something that stays
+  # discriminable rather than recycling colours.
+  expect_length(unique(scale_colour_gi(12)$palette(12)), 12L)
+
+  expect_error(scale_colour_gi(0), "at least 1")
+  expect_error(scale_colour_gi(2.5), "whole number")
+  expect_error(scale_fill_gi("three"), "whole number")
 })

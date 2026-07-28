@@ -18,8 +18,9 @@ and \code{sd}, the interval \code{lower} and \code{upper}, and the standardised 
 }
 \description{
 Leave one out cross validation using the exact Gaussian process identity
-(Rasmussen and Williams 2006, equation 5.12), so no refitting loop is needed.
-Two things matter: the root mean squared error, which says whether the
+(Rasmussen and Williams 2006, equation 5.12) together with the partitioned
+inverse identity for the fold's signal variance, so every fold is exact and no
+refitting loop is needed. Two things matter: the root mean squared error, which says whether the
 emulator interpolates well, and the proportion of held out points falling
 inside their own 95 percent predictive interval, which says whether its
 uncertainty is honest. A well calibrated emulator has coverage near 0.95. Far
@@ -27,9 +28,15 @@ below that and the emulator is overconfident and must not be used to make
 decisions; far above and it is uninformative.
 }
 \note{
-Hyperparameters are estimated once on the full design and are not re
-estimated within each fold, which is the usual practice for emulators and
-makes these diagnostics mildly optimistic.
+What is re estimated per fold, and what is not. The correlation
+lengthscales and the nugget are estimated once on the full design and are
+held fixed across folds, which is the usual practice for emulators and
+leaves these diagnostics mildly optimistic. Everything that depends on the
+output values is redone within each fold: the centring, the scaling and the
+profiled signal variance are all recomputed from the retained points alone,
+so a held out value never contributes to its own prediction. The fold
+scaling cancels between the standardised prediction and the profiled
+variance, which is why only the centring appears explicitly in the code.
 }
 \examples{
 x <- cbind(rep(seq(0, 1, length.out = 6), each = 6),

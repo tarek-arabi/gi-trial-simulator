@@ -14,8 +14,21 @@ power_at(design, control_rate, treatment_rate)
 \item{treatment_rate}{Treatment-arm event probability, in (0, 1).}
 }
 \value{
-A single number: the probability of rejecting the null in the
-direction of treatment superiority, given the design's total sample size.
+A single number, rpact's \code{overallReject}: the probability that the
+trial crosses an efficacy boundary in the direction of treatment
+superiority, given the design's total sample size and allocation ratio.
+
+For a design built with \code{futility = "nonbinding_obf"} or
+\code{"binding_obf"} this is a probability of reaching efficacy \emph{without having
+stopped for futility first}, because rpact applies the futility bounds
+when it propagates the trial forward. It is therefore not the type I error
+rate of the design when the futility bounds are non-binding: evaluated at
+equal rates, a non-binding O'Brien-Fleming futility design returns roughly
+0.023 rather than its 0.025 alpha, since the replicates that would have
+gone on to reject after crossing a futility bound have been removed. A
+sponsor who declines to act on a non-binding bound retains the full alpha,
+which this function does not report. Use \code{futility = "none"} to see the
+efficacy-only quantity.
 }
 \description{
 Re-evaluates an already-sized design at rates that may differ from the ones

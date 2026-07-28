@@ -23,6 +23,15 @@ available, the \code{gi_theme()} styling, and no plot title.
 Expected value of sample information against the size of the trial being
 costed, with a Monte Carlo uncertainty ribbon where the curve carries one.
 }
+\details{
+Rows whose sample size or EVSI value is missing or non-finite cannot be
+positioned, so they are dropped before plotting, as in \code{\link[=plot_boundaries]{plot_boundaries()}};
+if that empties the curve the function stops. The ribbon is treated
+separately: a row whose interval bounds are missing or non-finite keeps its
+point on the curve and simply carries no ribbon there, and a curve whose
+bounds are all unusable is drawn as a bare line. A negative standard error is
+an error rather than a ribbon drawn upside down.
+}
 \examples{
 if (requireNamespace("ggplot2", quietly = TRUE)) {
   voi <- list(curve = data.frame(

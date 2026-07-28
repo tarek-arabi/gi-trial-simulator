@@ -51,6 +51,43 @@ test_that("pi1 is the treatment arm, so allocation is applied to the right arm",
   expect_gt(d$detail$n_treatment, d$detail$n_control)
 })
 
+test_that("unequal allocation leaves no per-arm number that can be misread", {
+  d <- design_fixed(ercp(), allocation_ratio = 2)
+  g <- design_group_sequential(ercp(), k = 3, allocation_ratio = 2)
+
+  for (design in list(d, g)) {
+    # There is no common arm size, so the contract says NA rather than a
+    # plausible-looking number. It used to be max(n_treatment, n_control),
+    # which describes a larger balanced trial than the one that was sized.
+    expect_true(is.na(design$n_per_arm))
+    expect_identical(
+      design$n_total,
+      design$detail$n_treatment + design$detail$n_control
+    )
+    expect_gt(design$detail$n_treatment, design$detail$n_control)
+    expect_false(isTRUE(all.equal(
+      design$n_total, 2 * max(design$detail$n_treatment, design$detail$n_control)
+    )))
+  }
+
+  # The invariant that matters: a consumer reading n_per_arm fails rather than
+  # simulating a balanced trial and overstating power by about 8 points.
+  expect_error(
+    simulate_fixed(ercp(), n_per_arm = d$n_per_arm, nsim = 10, seed = 1),
+    "n_per_arm"
+  )
+  expect_error(simulate_group_sequential(g, nsim = 10, seed = 1), "n_per_arm")
+})
+
+test_that("print names both arm sizes when allocation is unequal", {
+  out <- capture.output(print(design_fixed(ercp(), allocation_ratio = 2)))
+
+  expect_true(any(grepl("treatment /", out, fixed = TRUE)))
+  expect_true(any(grepl("control", out, fixed = TRUE)))
+  expect_false(any(grepl("per arm", out, fixed = TRUE)))
+  expect_false(any(grepl("NA", out, fixed = TRUE)))
+})
+
 test_that("halving the treatment effect increases the required sample size", {
   full <- design_fixed(ercp())
   half_rate <- 0.0658 - (0.0658 - 0.0395) / 2
@@ -177,6 +214,65 @@ test_that("futility is wired through rpact rather than invented", {
   expect_gt(nonbinding$n_total, none$n_total)
 })
 
+test_that("a futility bound sitting on rpact's floor is reported as absent", {
+  # rpact writes -6 when no futility bound applies and clamps anything lower
+  # onto it, but the clamp is not exact from below: here it returns -5.98780.
+  # An exact `<= -6` test let that through and reported it as a real bound.
+  g <- design_group_sequential(
+    ercp(),
+    k = 2, type_of_design = "asP", futility = "nonbinding_obf",
+    information_rates = c(0.0573, 1)
+  )
+  raw <- as.numeric(g$detail$rpact_design$futilityBounds)
+
+  expect_gt(raw, -6)
+  expect_lt(raw, -5.9)
+  expect_true(all(is.na(g$detail$futility_z)))
+  expect_true(is.na(gs_boundaries(g)$futility_z[1]))
+
+  # A bound a monitoring committee could actually act on is still reported.
+  usable <- design_group_sequential(ercp(), k = 3, futility = "nonbinding_obf")
+  expect_false(any(is.na(usable$detail$futility_z[1:2])))
+  expect_gt(min(usable$detail$futility_z[1:2]), -5)
+})
+
+test_that("an analysis that can never stop the trial is refused", {
+  # asOF spends effectively no alpha this early, so rpact returns an infinite
+  # efficacy bound and no futility bound: 63 patients and no possible decision.
+  expect_error(
+    design_group_sequential(ercp(), k = 3, information_rates = c(0.02, 0.5, 1)),
+    "Analysis 1 at information rate 0.02 cannot stop the trial"
+  )
+  expect_error(
+    design_group_sequential(
+      ercp(),
+      k = 3, information_rates = c(0.02, 0.5, 1), futility = "nonbinding_obf"
+    ),
+    "cannot stop the trial"
+  )
+
+  # The same first look is usable under a spending function that spends alpha
+  # early, and that design is still returned.
+  early <- design_group_sequential(
+    ercp(),
+    k = 3, type_of_design = "asP", information_rates = c(0.02, 0.5, 1)
+  )
+  expect_true(all(is.finite(early$detail$efficacy_z)))
+  expect_identical(early$detail$n_cumulative[3], early$n_total)
+})
+
+test_that("power_at reports rejection net of futility stopping", {
+  # Documented limitation: rpact's overallReject applies the futility bounds
+  # when it propagates the trial forward, so under the null a non-binding
+  # futility design returns less than its alpha.
+  none <- design_group_sequential(ercp(), k = 3, futility = "none")
+  nonbinding <- design_group_sequential(ercp(), k = 3, futility = "nonbinding_obf")
+
+  expect_equal(power_at(none, 0.0658, 0.0658), 0.025, tolerance = 1e-3)
+  expect_lt(power_at(nonbinding, 0.0658, 0.0658), 0.024)
+  expect_gt(power_at(nonbinding, 0.0658, 0.0658), 0.02)
+})
+
 test_that("group-sequential boundaries match a direct rpact call exactly", {
   g <- design_group_sequential(ercp(), k = 3, type_of_design = "asOF")
 
@@ -231,7 +327,16 @@ test_that("gs_boundaries returns one tidy row per analysis", {
   expect_identical(b$analysis, 1:3)
   expect_true(all(diff(b$n_cumulative) > 0))
   expect_identical(b$n_cumulative[3], g$n_total)
-  expect_equal(b$efficacy_z, g$detail$efficacy_z)
+
+  # Check the columns against the engine rather than against the fields they
+  # are copied from, which would agree even if both were wrong.
+  rp <- rpact::getDesignGroupSequential(
+    kMax = 3L, alpha = 0.025, beta = 0.1, sided = 1L, typeOfDesign = "asOF",
+    typeBetaSpending = "bsOF", bindingFutility = FALSE
+  )
+  expect_equal(b$efficacy_z, as.numeric(rp$criticalValues))
+  expect_equal(b$futility_z, c(as.numeric(rp$futilityBounds), NA_real_))
+  expect_equal(b$cumulative_alpha_spent, as.numeric(rp$alphaSpent))
 })
 
 test_that("gs_boundaries also describes a fixed design as a single analysis", {

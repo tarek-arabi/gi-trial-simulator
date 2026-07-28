@@ -21,27 +21,65 @@ NULL
   }
 }
 
-.rng_restore <- function(state) {
-  if (is.null(state)) {
-    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  } else {
-    assign(".Random.seed", state, envir = globalenv())
+# The caller's complete random number state: the seed vector when one exists,
+# and the generator kinds. The kinds have to be captured separately because
+# set.seed(kind = ) changes them globally and deleting .Random.seed does not
+# put them back.
+.rng_capture <- function() {
+  list(seed = .rng_snapshot(), kind = RNGkind())
+}
+
+.rng_forget <- function() {
+  if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    rm(".Random.seed", envir = globalenv())
   }
   invisible(NULL)
 }
 
-# A seed is either a single integer, or a full .Random.seed vector as produced
-# by sim_seeds(). Assigning the vector also restores its generator kind, which
-# is how a task run under mclapply reproduces a task run under lapply.
+.rng_reset <- function(captured) {
+  if (!is.null(captured$seed)) {
+    assign(".Random.seed", captured$seed, envir = globalenv())
+    return(invisible(NULL))
+  }
+  # The caller had no .Random.seed, so the kinds are all there is to put back.
+  # Whatever is there now is dropped first: RNGkind() reads .Random.seed and
+  # refuses to run on a malformed one, which .is_random_seed() can leave behind.
+  .rng_forget()
+  RNGkind(
+    kind = captured$kind[1L],
+    normal.kind = captured$kind[2L],
+    sample.kind = captured$kind[3L]
+  )
+  .rng_forget()
+  invisible(NULL)
+}
+
+# The generator a scalar seed is pinned to. Without pinning, set.seed() runs
+# under whatever kind the calling session happened to be using, so a recorded
+# seed would not be enough to reproduce a recorded result.
+GI_SCALAR_SEED_RNG <- c(
+  kind = "Mersenne-Twister",
+  normal.kind = "Inversion",
+  sample.kind = "Rejection"
+)
+
+# A seed is either a single whole number, or a full .Random.seed vector as
+# produced by sim_seeds(). Assigning the vector also restores its generator
+# kind, which is how a task run under mclapply reproduces a task run under
+# lapply. Returns the three generator kinds actually in force, which every
+# simulation records alongside its seed.
 .rng_set <- function(seed) {
   if (length(seed) > 1L) {
     assign(".Random.seed", as.integer(seed), envir = globalenv())
   } else {
-    set.seed(as.integer(seed))
+    set.seed(
+      as.integer(seed),
+      kind = GI_SCALAR_SEED_RNG[["kind"]],
+      normal.kind = GI_SCALAR_SEED_RNG[["normal.kind"]],
+      sample.kind = GI_SCALAR_SEED_RNG[["sample.kind"]]
+    )
   }
-  invisible(NULL)
+  RNGkind()
 }
 
 .check_count <- function(x, arg, min = 1L) {
@@ -58,10 +96,51 @@ NULL
   as.integer(seed)
 }
 
+# The only dependable test that a vector is a usable .Random.seed is to install
+# it and draw from it, which is what the caller is about to do anyway. An
+# unusable vector either errors or triggers R's "ignored, not an integer
+# vector" warning, and both must fail here rather than several frames deeper.
+.is_random_seed <- function(seed) {
+  captured <- .rng_capture()
+  on.exit(
+    {
+      .rng_forget()
+      .rng_reset(captured)
+    },
+    add = TRUE
+  )
+  isTRUE(tryCatch(
+    {
+      assign(".Random.seed", seed, envir = globalenv())
+      stats::runif(1L)
+      TRUE
+    },
+    error = function(e) FALSE,
+    warning = function(w) FALSE
+  ))
+}
+
 .check_seed <- function(seed) {
-  if (!is.numeric(seed) || length(seed) < 1L || anyNA(seed)) {
+  msg <- paste0(
+    "`seed` must be a single whole number, or a .Random.seed vector as ",
+    "returned by sim_seeds()."
+  )
+  if (!is.numeric(seed) || length(seed) < 1L || anyNA(seed) || !all(is.finite(seed))) {
+    stop(msg, call. = FALSE)
+  }
+  if (any(seed != trunc(seed)) || any(abs(seed) > .Machine$integer.max)) {
     stop(
-      "`seed` must be a single number or a .Random.seed vector as returned by sim_seeds().",
+      msg, " Every element must be a whole number no larger than ",
+      .Machine$integer.max, " in absolute value.",
+      call. = FALSE
+    )
+  }
+  seed <- as.integer(seed)
+  if (length(seed) > 1L && !.is_random_seed(seed)) {
+    stop(
+      msg, " A vector of length ", length(seed),
+      " starting at ", seed[1L], " is not a valid .Random.seed for any ",
+      "generator this R session knows.",
       call. = FALSE
     )
   }
@@ -127,9 +206,18 @@ NULL
   se <- sqrt(p_bar * (1 - p_bar) * (1 / n_t + 1 / n_c))
   z <- sign * (p_t - p_c) / se
   # With no events, or events in every patient, the score test is undefined and
-  # carries no evidence either way.
+  # carries no evidence either way. Substituting 0 keeps the replicate in the
+  # denominator as a non-rejection; .score_undefined() flags the same replicates
+  # so the substitution is counted and reported rather than absorbed silently.
   z[!is.finite(z)] <- 0
   z
+}
+
+# TRUE for replicates whose pooled score statistic is undefined, that is where
+# the pooled event proportion is exactly 0 or exactly 1.
+.score_undefined <- function(x_t, n_t, x_c, n_c) {
+  events <- x_t + x_c
+  events == 0 | events == (n_t + n_c)
 }
 
 .risk_difference <- function(x_t, n_t, x_c, n_c, conf_level = 0.95) {
@@ -138,7 +226,20 @@ NULL
   rd <- p_t - p_c
   se <- sqrt(p_t * (1 - p_t) / n_t + p_c * (1 - p_c) / n_c)
   crit <- stats::qnorm(1 - (1 - conf_level) / 2)
+  # se is exactly 0 when both arm proportions sit on 0 or 1, which collapses the
+  # Wald interval to a point and makes it cover nothing. Those replicates are
+  # returned as they are and counted by the caller, not repaired here.
   list(rd = rd, se = se, lower = rd - crit * se, upper = rd + crit * se)
+}
+
+# One degeneracy record per simulation: how many replicates had an undefined
+# score statistic, how many had a zero-width interval, and how many had either.
+.degeneracy <- function(score_undefined, interval_undefined) {
+  list(
+    score_undefined = sum(score_undefined),
+    interval_undefined = sum(interval_undefined),
+    any = sum(score_undefined | interval_undefined)
+  )
 }
 
 #' Independent random number streams for reproducible simulation
@@ -160,8 +261,8 @@ sim_seeds <- function(seed, n) {
   seed <- .check_root_seed(seed)
   n <- .check_count(n, "n")
 
-  state <- .rng_snapshot()
-  on.exit(.rng_restore(state), add = TRUE)
+  state <- .rng_capture()
+  on.exit(.rng_reset(state), add = TRUE)
 
   set.seed(seed, kind = "L'Ecuyer-CMRG")
   stream <- .rng_snapshot()
@@ -204,12 +305,36 @@ sim_seeds <- function(seed, n) {
 #' `correct = FALSE`; the package test suite pins it to `prop.test` on a sample
 #' of replicates rather than trusting the arithmetic.
 #'
+#' @section Agreement with rpact:
+#' Simulated power reproduces the analytic power [power_at()] reads from rpact
+#' to within about half a percentage point, and is consistently slightly
+#' higher. Characterised at 200,000 replications across five scenarios spanning
+#' control rates from 0.066 to 0.50, the simulated rejection rate ran between
+#' 0.003 and 0.007 above the rpact value, with the sign positive every time.
+#' Neither number is wrong: rpact evaluates a normal-approximation formula for
+#' two rates, while this function simulates the discrete binomial test that a
+#' real trial would perform, and the two differ by about that much. Treat a gap
+#' of this size and sign as expected, and a gap above 0.01, or one of the
+#' opposite sign, as a reason to investigate.
+#'
+#' @section Degenerate replicates:
+#' A replicate in which nobody has an event, or everybody does, has no defined
+#' score statistic, and one in which both arm proportions sit on 0 or 1 has a
+#' zero-width confidence interval. Such replicates are recorded with `z = 0`,
+#' which counts them as non-rejections, and are flagged in the `degenerate`
+#' column and counted in the `degenerate` element so that they are visible
+#' rather than silently absorbed into the rejection rate. They are common only
+#' at small sample sizes or very low event rates.
+#'
 #' @param scenario A `gi_scenario`, as returned by [scenario()].
 #' @param n_per_arm Number of patients randomised to each arm.
 #' @param nsim Number of simulated trials.
 #' @param alpha One-sided type I error rate the test is judged against.
-#' @param seed Root seed. Either a single integer or a `.Random.seed` vector
-#'   from [sim_seeds()]. The caller's random number state is left unchanged.
+#' @param seed Root seed. Either a single whole number or a `.Random.seed`
+#'   vector from [sim_seeds()]. A single number also pins the generator kind to
+#'   Mersenne-Twister with inversion and rejection sampling, so the recorded
+#'   seed reproduces the recorded results whatever generator the calling session
+#'   was using. The caller's random number state is left unchanged.
 #' @param workers Retained for interface symmetry with [simulate_grid()].
 #'   Replication is vectorised rather than looped, so values above 1 have no
 #'   effect here and results never depend on it. Parallelism is applied across
@@ -217,8 +342,11 @@ sim_seeds <- function(seed, n) {
 #' @return An object of class `gi_simulation`: a list with `results` (a data
 #'   frame with one row per replicate holding `z`, `p`, `reject`,
 #'   `risk_difference`, its standard error and 95 percent confidence limits,
-#'   the two arm event counts and `n_total`), plus `design_type`, `n_per_arm`,
-#'   `n_total`, `nsim`, `alpha`, `seed`, `rates` and `scenario`.
+#'   the two arm event counts, `n_total` and the logical `degenerate`), plus
+#'   `design_type`, `n_per_arm`, `n_total`, `nsim`, `alpha`, `seed`,
+#'   `rng_kind` (the three generator kinds the replicates were drawn under),
+#'   `rates`, `scenario` and `degenerate` (counts of the replicates with an
+#'   undefined score statistic, a zero-width interval, and either).
 #' @seealso [ademp_summary()], [simulate_group_sequential()], [simulate_grid()]
 #' @examples
 #' sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)
@@ -237,9 +365,9 @@ simulate_fixed <- function(scenario, n_per_arm, nsim = 10000, alpha = 0.025,
   rates <- .resolve_rates(NULL, scenario)
   sign <- .benefit_sign(scenario$direction)
 
-  state <- .rng_snapshot()
-  on.exit(.rng_restore(state), add = TRUE)
-  .rng_set(seed)
+  state <- .rng_capture()
+  on.exit(.rng_reset(state), add = TRUE)
+  rng_kind <- .rng_set(seed)
 
   x_c <- stats::rbinom(nsim, n_per_arm, rates[["control"]])
   x_t <- stats::rbinom(nsim, n_per_arm, rates[["treatment"]])
@@ -247,6 +375,8 @@ simulate_fixed <- function(scenario, n_per_arm, nsim = 10000, alpha = 0.025,
   z <- .score_z(x_t, n_per_arm, x_c, n_per_arm, sign)
   p <- stats::pnorm(z, lower.tail = FALSE)
   rd <- .risk_difference(x_t, n_per_arm, x_c, n_per_arm)
+  score_undefined <- .score_undefined(x_t, n_per_arm, x_c, n_per_arm)
+  interval_undefined <- rd$se == 0
 
   results <- data.frame(
     replicate = seq_len(nsim),
@@ -260,6 +390,7 @@ simulate_fixed <- function(scenario, n_per_arm, nsim = 10000, alpha = 0.025,
     ci_lower = rd$lower,
     ci_upper = rd$upper,
     n_total = 2L * n_per_arm,
+    degenerate = score_undefined | interval_undefined,
     stringsAsFactors = FALSE
   )
 
@@ -272,8 +403,10 @@ simulate_fixed <- function(scenario, n_per_arm, nsim = 10000, alpha = 0.025,
       nsim = nsim,
       alpha = alpha,
       seed = seed,
+      rng_kind = rng_kind,
       rates = rates,
       scenario = scenario,
+      degenerate = .degeneracy(score_undefined, interval_undefined),
       engine = "stats::rbinom + pooled score test"
     ),
     class = c("gi_simulation", "list")
@@ -373,22 +506,36 @@ simulate_fixed <- function(scenario, n_per_arm, nsim = 10000, alpha = 0.025,
 #' futility, which is below the rate rpact reports for the binding-free
 #' boundary.
 #'
+#' Interim looks are placed at `round(information_rate * n_per_arm)` patients
+#' per arm, so a design whose information rates do not divide its sample size
+#' exactly is simulated at the nearest whole patient. As with [simulate_fixed()]
+#' the simulated operating characteristics are those of the discrete binomial
+#' test rather than of rpact's normal approximation, which leaves simulated
+#' power slightly above the analytic value and the realised mean sample size
+#' slightly above rpact's expected sample size.
+#'
 #' @param design A `gi_design` of type `group_sequential`.
 #' @param nsim Number of simulated trials.
-#' @param seed Root seed. Either a single integer or a `.Random.seed` vector
-#'   from [sim_seeds()]. The caller's random number state is left unchanged.
+#' @param seed Root seed. Either a single whole number or a `.Random.seed`
+#'   vector from [sim_seeds()]. A single number also pins the generator kind, as
+#'   documented in [simulate_fixed()]. The caller's random number state is left
+#'   unchanged.
 #' @param workers Retained for interface symmetry with [simulate_grid()].
 #'   Replication is vectorised within each stage, so values above 1 have no
 #'   effect here and results never depend on it.
 #' @param rates Optional numeric override of the scenario event rates, either a
 #'   single rate applied to both arms (which simulates under the null) or
-#'   `c(control, treatment)`.
+#'   `c(control, treatment)`. Boundaries and sample size still come from the
+#'   design; only the data-generating rates change.
 #' @return An object of class `gi_simulation`: a list with `results` (one row
 #'   per replicate holding `stop_stage`, `stopped_for`, `reject`, `z`, `p`, the
 #'   risk difference at the stopping analysis with its 95 percent confidence
-#'   limits, and the realised `n_total`), plus `design_type`, `n_per_arm`,
-#'   `n_total`, `nsim`, `alpha`, `seed`, `rates`, `scenario`, `design` and a
-#'   `boundaries` element recording exactly what was compared against.
+#'   limits, the realised `n_total`, and the logical `degenerate` flagging a
+#'   stopping analysis whose score statistic or interval was undefined), plus
+#'   `design_type`, `n_per_arm`, `n_total`, `nsim`, `alpha`, `seed`,
+#'   `rng_kind`, `rates`, `scenario`, `design`, `degenerate` (the counts behind
+#'   that flag) and a `boundaries` element recording exactly what was compared
+#'   against.
 #' @seealso [ademp_summary()], [simulate_fixed()]
 #' @examples
 #' sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)
@@ -437,9 +584,9 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
   n_stage <- cummax(n_stage)
   increment <- diff(c(0, n_stage))
 
-  state <- .rng_snapshot()
-  on.exit(.rng_restore(state), add = TRUE)
-  .rng_set(seed)
+  state <- .rng_capture()
+  on.exit(.rng_reset(state), add = TRUE)
+  rng_kind <- .rng_set(seed)
 
   cum_c <- integer(nsim)
   cum_t <- integer(nsim)
@@ -451,6 +598,7 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
   stop_n <- integer(nsim)
   reject <- logical(nsim)
   stopped_for <- character(nsim)
+  stop_undefined <- logical(nsim)
 
   for (k in seq_len(kmax)) {
     if (increment[k] > 0L) {
@@ -458,6 +606,7 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
       cum_t <- cum_t + stats::rbinom(nsim, increment[k], rates[["treatment"]])
     }
     z_k <- .score_z(cum_t, n_stage[k], cum_c, n_stage[k], sign)
+    undefined_k <- .score_undefined(cum_t, n_stage[k], cum_c, n_stage[k])
 
     cross_efficacy <- active & z_k >= bounds$critical[k]
     cross_futility <- if (k < kmax) {
@@ -474,6 +623,7 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
       stop_x_c[ending] <- cum_c[ending]
       stop_x_t[ending] <- cum_t[ending]
       stop_n[ending] <- n_stage[k]
+      stop_undefined[ending] <- undefined_k[ending]
       reject[ending] <- cross_efficacy[ending]
       stopped_for[cross_efficacy] <- "efficacy"
       stopped_for[cross_futility] <- "futility"
@@ -484,6 +634,7 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
   }
 
   rd <- .risk_difference(stop_x_t, stop_n, stop_x_c, stop_n)
+  interval_undefined <- rd$se == 0
 
   results <- data.frame(
     replicate = seq_len(nsim),
@@ -500,6 +651,7 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
     ci_upper = rd$upper,
     n_per_arm = stop_n,
     n_total = 2L * stop_n,
+    degenerate = stop_undefined | interval_undefined,
     stringsAsFactors = FALSE
   )
 
@@ -512,9 +664,11 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
       nsim = nsim,
       alpha = alpha,
       seed = seed,
+      rng_kind = rng_kind,
       rates = rates,
       scenario = scenario,
       design = design,
+      degenerate = .degeneracy(stop_undefined, interval_undefined),
       boundaries = list(
         kmax = kmax,
         information_rates = bounds$information,
@@ -541,7 +695,11 @@ simulate_group_sequential <- function(design, nsim = 10000, seed = 1,
 #'   are used to label rows.
 #' @param design_fn Function of one argument (a `gi_scenario`) returning either
 #'   a `gi_design` or a single number giving the per-arm sample size of a fixed
-#'   design.
+#'   design. Whatever it returns, every scenario is simulated at that
+#'   scenario's own event rates: a design built on other rates contributes its
+#'   sample size and, for a group-sequential design, its boundaries, but never
+#'   the rates the data are drawn from. Its endpoint direction must match the
+#'   scenario's, since that is what orients the one-sided test.
 #' @param nsim Number of simulated trials per scenario.
 #' @param seed Root seed from which the per-scenario streams are derived.
 #' @param workers Number of parallel workers. Values above 1 use
@@ -593,7 +751,23 @@ simulate_grid <- function(scenario_grid, design_fn, nsim = 10000, seed = 1,
     if (is.numeric(design) && length(design) == 1L) {
       simulate_fixed(sc, n_per_arm = design, nsim = nsim, seed = streams[[i]])
     } else if (inherits(design, "gi_design") && identical(design$type, "group_sequential")) {
-      simulate_group_sequential(design, nsim = nsim, seed = streams[[i]])
+      # The grid scenario, not the scenario the design was powered on, supplies
+      # the data-generating rates. Without this a grid of scenarios would be
+      # simulated at whatever rates design_fn happened to build its design from.
+      .check_scenario(design$scenario, "design_fn(scenario)$scenario")
+      if (!identical(design$scenario$direction, sc$direction)) {
+        stop(
+          "`design_fn` returned a group-sequential design whose endpoint ",
+          "direction ('", design$scenario$direction, "') differs from that of ",
+          "grid scenario ", i, " ('", sc$direction, "'), so the simulated test ",
+          "would be oriented against the wrong tail.",
+          call. = FALSE
+        )
+      }
+      simulate_group_sequential(design,
+        nsim = nsim, seed = streams[[i]],
+        rates = c(control = sc$control_rate, treatment = sc$treatment_rate)
+      )
     } else if (inherits(design, "gi_design")) {
       simulate_fixed(sc, n_per_arm = design$n_per_arm, nsim = nsim,
         alpha = design$alpha %||% 0.025, seed = streams[[i]]
@@ -614,7 +788,9 @@ simulate_grid <- function(scenario_grid, design_fn, nsim = 10000, seed = 1,
     ademp <- ademp_summary(sim)
     wide <- as.list(stats::setNames(ademp$estimate, ademp$measure))
     wide_mcse <- as.list(stats::setNames(ademp$mcse, paste0(ademp$measure, "_mcse")))
-    sc <- sim$scenario
+    # The row is labelled by the grid scenario, so it is identified by the grid
+    # scenario too, whatever scenario design_fn built its design from.
+    sc <- scenario_grid[[i]]
     base <- data.frame(
       scenario = labels[i],
       pack_id = sc$pack_id,
@@ -658,6 +834,13 @@ print.gi_simulation <- function(x, ...) {
   ))
   if (identical(x$design_type, "group_sequential")) {
     cat(sprintf("  mean total sample size %.1f\n", mean(x$results$n_total)))
+  }
+  degenerate <- x$degenerate$any %||% 0L
+  if (degenerate > 0L) {
+    cat(sprintf(
+      "  %d of %d replications degenerate (no events, or every patient an event)\n",
+      degenerate, x$nsim
+    ))
   }
   invisible(x)
 }

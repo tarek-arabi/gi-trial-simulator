@@ -197,11 +197,15 @@ voi_evpi_from_nb <- function(nb) {
 #' Differencing within each simulated trial rather than differencing two
 #' separately estimated averages gives the same quantity, because the expected
 #' net benefit of a fixed decision under the posterior averages over datasets to
-#' its value under the prior. It is a much better estimator: the large common
-#' component of net benefit cancels within each simulated trial, which cuts the
-#' Monte Carlo error by roughly a factor of four in the examples here, and the
-#' estimate cannot come out negative. The unpaired form is reported under
-#' `detail$evsi_unpaired` and the two agree as `nsim` grows.
+#' its value under the prior. It is usually the better estimator: the large
+#' common component of net benefit cancels within each simulated trial, which
+#' cuts the Monte Carlo error by a factor of roughly two to three in the examples
+#' here, and the estimate cannot come out negative. That gain comes from most
+#' simulated trials leaving the decision unchanged, so it shrinks as the trial
+#' grows large enough to change the decision often; for a trial already close to
+#' perfect information the two estimators have similar precision, and the paired
+#' one can be slightly the noisier of the two. The unpaired form is reported
+#' under `detail$evsi_unpaired` and the two agree as `nsim` grows.
 #'
 #' The posterior is formed by likelihood reweighting of the supplied prior draws
 #' rather than by a separate conjugate model, so that the belief being updated
@@ -226,8 +230,11 @@ voi_evpi_from_nb <- function(nb) {
 #'   [evpi()]. It receives the risk difference as a scalar, or the pair of rates
 #'   as a numeric vector, matching the form of `prior_draws`.
 #' @param nsim Number of simulated trials in the outer loop.
-#' @param seed Integer seed, recorded in the return value. The ambient random
-#'   number state is restored on exit.
+#' @param seed Seed for the simulated trials, recorded in the return value. It
+#'   must be a whole number: [set.seed()] truncates towards zero, so a fractional
+#'   seed would be recorded without being the seed that produced the result, and
+#'   is rejected rather than truncated silently. The ambient random number state
+#'   is restored on exit.
 #'
 #' @return An object of class `gi_evsi`, a list with `evsi`, its Monte Carlo
 #'   standard error `mcse`, the `evpi` for the same prior and net benefit
@@ -270,8 +277,14 @@ evsi_trial <- function(prior_draws, n_per_arm, control_rate = NULL,
     stop("`nsim` must be a single number of at least 2.", call. = FALSE)
   }
   nsim <- as.integer(nsim)
-  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
-    stop("`seed` must be a single finite number.", call. = FALSE)
+  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed) ||
+    seed != trunc(seed)) {
+    stop(
+      "`seed` must be a single finite whole number. set.seed() truncates ",
+      "towards zero, so a fractional seed would be recorded here without being ",
+      "the seed that produced the result.",
+      call. = FALSE
+    )
   }
 
   one_d <- is.numeric(prior_draws) && is.null(dim(prior_draws))
@@ -433,7 +446,11 @@ evsi_trial <- function(prior_draws, n_per_arm, control_rate = NULL,
 #'
 #' @return A data frame with one row per sample size and columns `n_per_arm`,
 #'   `evsi`, `mcse`, `evsi_unpaired`, `ess_mean`, `evpi` and `fraction_of_evpi`.
-#'   The column names are chosen to be readable directly by [plot_evsi()].
+#'   `fraction_of_evpi` is `evsi / evpi` when EVPI is positive and `NA_real_`
+#'   when EVPI is 0, which happens whenever one decision option is optimal under
+#'   every prior draw: there is then no information to buy and no fraction of it
+#'   to report. The column names are chosen to be readable directly by
+#'   [plot_evsi()].
 #'
 #' @note The curve is a Monte Carlo estimate at every point, so it need not be
 #'   exactly monotone even though the quantity it estimates is, and once it
@@ -580,10 +597,21 @@ print.gi_evsi <- function(x, ...) {
     "  (MCSE ", format(x$mcse, digits = 2), ")\n",
     sep = ""
   )
-  cat("  EVPI per patient: ", format(x$evpi, digits = 4),
-    "   EVSI is ", sprintf("%.1f", 100 * x$evsi / x$evpi), " percent of it\n",
-    sep = ""
-  )
+  # EVPI is exactly 0 whenever one option is optimal under every prior draw, and
+  # a percentage of nothing is not a number. voi_curve() reports NA in the same
+  # situation; here the situation itself is what is worth printing.
+  if (x$evpi > 0) {
+    cat("  EVPI per patient: ", format(x$evpi, digits = 4),
+      "   EVSI is ", sprintf("%.1f", 100 * x$evsi / x$evpi), " percent of it\n",
+      sep = ""
+    )
+  } else {
+    cat("  EVPI per patient: ", format(x$evpi, digits = 4),
+      "   one option is best under every prior draw, so there is no ",
+      "information for a trial to buy\n",
+      sep = ""
+    )
+  }
   cat("  posterior weight effective sample size: mean ",
     format(x$detail$ess_mean, digits = 3), ", minimum ",
     format(x$detail$ess_min, digits = 3), " of ", x$n_draws, " draws\n",

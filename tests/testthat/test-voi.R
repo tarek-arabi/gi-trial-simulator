@@ -201,6 +201,61 @@ test_that("voi_curve returns one row per size with columns plot_evsi can read", 
   expect_identical(length(unique(curve$evpi)), 1L)
 })
 
+test_that("printing an evsi says there is nothing to buy rather than printing NaN", {
+  # One option dominates every prior draw, so EVPI is exactly 0 and EVSI is a
+  # percentage of nothing. The print method used to divide anyway and report
+  # "EVSI is NaN percent of it".
+  dominant <- function(d) c(always_better = 1 + 0 * d, always_worse = 0)
+  f <- suppressWarnings(evsi_trial(
+    effect_draws(n = 500), 100, 0.0658,
+    net_benefit_fn = dominant, nsim = 50
+  ))
+
+  expect_identical(f$evpi, 0)
+  out <- utils::capture.output(print(f))
+  expect_false(any(grepl("NaN", out, fixed = TRUE)))
+  expect_true(any(grepl("no information for a trial to buy", out, fixed = TRUE)))
+})
+
+test_that("voi_curve reports NA for the fraction of EVPI when EVPI is zero", {
+  # The documented behaviour of fraction_of_evpi in the one case where the ratio
+  # does not exist.
+  dominant <- function(d) c(always_better = 1 + 0 * d, always_worse = 0)
+  curve <- suppressWarnings(voi_curve(
+    effect_draws(n = 500), n_grid = c(100, 200),
+    control_rate = 0.0658, net_benefit_fn = dominant, nsim = 50
+  ))
+
+  expect_true(all(curve$evpi == 0))
+  expect_identical(curve$fraction_of_evpi, rep(NA_real_, 2))
+})
+
+test_that("a fractional seed is refused rather than silently truncated", {
+  # set.seed() truncates towards zero, so seed = 1.7 used to be recorded in the
+  # result while the simulated trials actually came from seed = 1, giving a
+  # recorded seed that does not reproduce its own result.
+  draws <- effect_draws(n = 500)
+
+  expect_error(
+    evsi_trial(draws, 200, 0.0658, deaths_averted, nsim = 20, seed = 1.7),
+    "whole number"
+  )
+  expect_error(
+    voi_curve(draws, n_grid = 200, control_rate = 0.0658,
+              net_benefit_fn = deaths_averted, nsim = 20, seed = 0.5),
+    "whole number"
+  )
+
+  f <- suppressWarnings(evsi_trial(draws, 200, 0.0658, deaths_averted,
+    nsim = 20, seed = 2
+  ))
+  again <- suppressWarnings(evsi_trial(draws, 200, 0.0658, deaths_averted,
+    nsim = 20, seed = f$seed
+  ))
+  expect_identical(f$seed, 2)
+  expect_identical(again$evsi, f$evsi)
+})
+
 test_that("population_evsi discounts a constant incidence stream correctly", {
   p <- population_evsi(0.002, incidence = 45000, horizon_years = 10, discount_rate = 0.03)
 

@@ -17,8 +17,10 @@ simulate_group_sequential(
 
 \item{nsim}{Number of simulated trials.}
 
-\item{seed}{Root seed. Either a single integer or a \code{.Random.seed} vector
-from \code{\link[=sim_seeds]{sim_seeds()}}. The caller's random number state is left unchanged.}
+\item{seed}{Root seed. Either a single whole number or a \code{.Random.seed}
+vector from \code{\link[=sim_seeds]{sim_seeds()}}. A single number also pins the generator kind, as
+documented in \code{\link[=simulate_fixed]{simulate_fixed()}}. The caller's random number state is left
+unchanged.}
 
 \item{workers}{Retained for interface symmetry with \code{\link[=simulate_grid]{simulate_grid()}}.
 Replication is vectorised within each stage, so values above 1 have no
@@ -26,15 +28,19 @@ effect here and results never depend on it.}
 
 \item{rates}{Optional numeric override of the scenario event rates, either a
 single rate applied to both arms (which simulates under the null) or
-\code{c(control, treatment)}.}
+\code{c(control, treatment)}. Boundaries and sample size still come from the
+design; only the data-generating rates change.}
 }
 \value{
 An object of class \code{gi_simulation}: a list with \code{results} (one row
 per replicate holding \code{stop_stage}, \code{stopped_for}, \code{reject}, \code{z}, \code{p}, the
 risk difference at the stopping analysis with its 95 percent confidence
-limits, and the realised \code{n_total}), plus \code{design_type}, \code{n_per_arm},
-\code{n_total}, \code{nsim}, \code{alpha}, \code{seed}, \code{rates}, \code{scenario}, \code{design} and a
-\code{boundaries} element recording exactly what was compared against.
+limits, the realised \code{n_total}, and the logical \code{degenerate} flagging a
+stopping analysis whose score statistic or interval was undefined), plus
+\code{design_type}, \code{n_per_arm}, \code{n_total}, \code{nsim}, \code{alpha}, \code{seed},
+\code{rng_kind}, \code{rates}, \code{scenario}, \code{design}, \code{degenerate} (the counts behind
+that flag) and a \code{boundaries} element recording exactly what was compared
+against.
 }
 \description{
 Accumulates events across the design's information rates, compares the
@@ -48,6 +54,14 @@ Futility bounds are applied as given. For a non-binding futility design the
 simulated type I error is therefore the rate under a trial that does stop for
 futility, which is below the rate rpact reports for the binding-free
 boundary.
+
+Interim looks are placed at \code{round(information_rate * n_per_arm)} patients
+per arm, so a design whose information rates do not divide its sample size
+exactly is simulated at the nearest whole patient. As with \code{\link[=simulate_fixed]{simulate_fixed()}}
+the simulated operating characteristics are those of the discrete binomial
+test rather than of rpact's normal approximation, which leaves simulated
+power slightly above the analytic value and the realised mean sample size
+slightly above rpact's expected sample size.
 }
 \examples{
 sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)

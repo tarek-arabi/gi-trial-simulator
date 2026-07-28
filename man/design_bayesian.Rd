@@ -34,13 +34,37 @@ probability that treatment is better exceeds this value.}
 \item{futility_threshold}{Stop for futility when that probability falls
 below this value. Must be smaller than \code{efficacy_threshold}.}
 
-\item{nsim}{Number of simulated trials per hypothesis. The Monte Carlo
-standard error of every reported rate is at most \code{0.5 / sqrt(nsim)}.}
+\item{nsim}{Number of simulated trials per hypothesis. This controls the
+variance of the reported rates and nothing else: the Monte Carlo standard
+error of every reported rate is at most \code{0.5 / sqrt(nsim)}. It does not
+control the bias described under \code{post_draws}, which no value of \code{nsim}
+reduces.}
 
 \item{seed}{Integer seed. Independent L'Ecuyer-CMRG streams are derived from
 it, one per simulated trial, so results do not depend on \code{workers}.}
 
-\item{post_draws}{Monte Carlo draws used for each posterior probability.}
+\item{post_draws}{Monte Carlo draws used for each posterior probability, at
+every look of every simulated trial. This is the accuracy dial of the
+design and too small a value corrupts the operating characteristics rather
+than merely blurring them. Each posterior probability is a mean of
+\code{post_draws} Bernoulli draws, so its standard error is at most
+\code{0.5 / sqrt(post_draws)}, attained when the true probability is 0.5, which
+is where the null distribution of the decision quantity is centred. If that
+standard error is not small next to the distance from \code{efficacy_threshold}
+to 0.5, trials from the bulk of the null cross the threshold on estimation
+noise alone: at \code{efficacy_threshold = 0.975} and \code{post_draws = 2} the
+simulated type I error is about 0.33, more than ten times nominal, and it
+stays there however large \code{nsim} is. The function therefore requires that
+distance to cover at least ten standard errors, which is
+\code{ceiling((5 / (efficacy_threshold - 0.5))^2)} draws, 111 at the default
+threshold and never fewer than 100, and warns below twenty standard errors,
+\code{ceiling((10 / (efficacy_threshold - 0.5))^2)}, which is 444 at the default
+threshold. Meeting the minimum is not the same as being accurate: a
+secondary effect, that an estimate taking only the values \code{0/post_draws} to
+\code{post_draws/post_draws} cannot land exactly on the threshold, still moves
+the simulated type I error by roughly \code{1 / ((1 - efficacy_threshold) * post_draws)} in relative terms, about 9 percent at 444 draws and 1 percent
+at the default of 4000. Treat the minimum as the point below which the
+answer is wrong, and the default as the point at which it is usable.}
 
 \item{workers}{Number of forked processes used via \code{\link[parallel:mclapply]{parallel::mclapply()}}.
 Results are identical for any value; only the run time changes.}
@@ -75,6 +99,17 @@ a nominal level supplied by the user. Nothing in a Bayesian stopping rule
 guarantees frequentist error control, so the honest report is what the
 simulation found. Use \code{\link[=calibrate_bayesian]{calibrate_bayesian()}} to choose a threshold that
 delivers a target level.
+
+Two separate Monte Carlo errors sit in these numbers and they behave
+differently. \code{nsim} controls \emph{variance}: how much a reported rate moves from
+one seed to the next, falling as \code{1 / sqrt(nsim)}. \code{post_draws} controls
+\emph{bias}: the stopping rule compares an estimated posterior probability, not
+the exact one, against a fixed threshold, and the estimation noise pushes
+trials across that threshold asymmetrically. The resulting distortion is a
+property of \code{post_draws} alone and does not shrink as \code{nsim} grows, so a
+large \code{nsim} on top of a small \code{post_draws} reports a biased answer with
+impressive precision. Set \code{post_draws} for accuracy first, then \code{nsim} for
+precision.
 }
 \examples{
 sc <- scenario("ercp_acute_cholangitis", control_rate = 0.30, treatment_rate = 0.15)
