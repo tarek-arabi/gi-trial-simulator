@@ -102,10 +102,11 @@ These are settled. Build on them rather than reopening them.
 
 Raise these rather than guessing past them.
 
-- **Is there a named biostatistician co-author yet?** Until there is, treat every statistical claim as
-  provisional and keep the benchmark and test coverage ahead of the feature work, because those are
-  what a statistician reviewing this will look at first. Nothing should be submitted anywhere without
-  one.
+- **Is every statistical claim independently checked?** Keep the benchmark and test coverage ahead of
+  the feature work, because that is what a reviewer looks at first. A claim is checked when it is
+  pinned to an independent reference: rpact against gsDesign, the simulator against analytic power,
+  the Bayesian posterior against numerical integration, a published sample size against the formula
+  its source paper names. An unpinned number is provisional no matter how confident it looks.
 - **Which endpoint anchors the definitive trial?** The current packs treat 30-day mortality as
   primary, following the anchoring trial. Mortality in mild-to-moderate cholangitis is rare enough
   that the required sample size may be infeasible for a realistic consortium, in which case a

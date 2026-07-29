@@ -16,9 +16,9 @@ against gsDesign. What it adds sits in two layers those tools deliberately leave
 GI-specific parameterization and the orchestration and reporting around a particular clinical
 question.
 
-That constraint is the point. Trial-design software written by someone who is not a biostatistician
-is worth exactly as much as its agreement with software that statisticians already trust, so this
-package is built to be checkable rather than clever.
+That constraint is the point. Trial-design software is worth exactly as much as its agreement with
+the software the field already trusts, so this package is built to be checkable rather than clever.
+Every number it reports is pinned to an independent reference, and the checks ship with it.
 
 ## Installation
 
