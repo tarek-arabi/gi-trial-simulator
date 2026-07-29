@@ -20,7 +20,7 @@ WORKERS <- as.integer(Sys.getenv("GITRIALSIM_WORKERS", unset = "4"))
 SEED <- 20260727
 NSIM <- 10000
 NSIM_BAYES <- 5000
-NSIM_PROCOVA <- 1000
+NSIM_PROCOVA <- 2000
 
 say <- function(...) cat(format(Sys.time(), "[%H:%M:%S] "), ..., "\n", sep = "")
 

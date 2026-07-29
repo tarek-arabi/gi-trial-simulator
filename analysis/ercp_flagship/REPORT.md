@@ -1,14 +1,22 @@
 # Designing the definitive trial of ERCP timing in acute cholangitis
 
-Results of the simulation study specified in [ADEMP.md](ADEMP.md), which was written and committed
-before the study was run. Reproduce with:
+Results of the simulation study specified in [ADEMP.md](ADEMP.md), which was written before the study
+was run. Reproduce with:
 
 ```bash
 Rscript analysis/ercp_flagship/run_flagship.R
 ```
 
+A caveat on that claim, stated here rather than left for a reader to discover. The protocol was
+written first, but it entered the repository in the same commit as the results (303fc3f), so the
+public history cannot corroborate the ordering, and a pre-registration that rests only on the
+author's word is not a pre-registration. No external timestamp anchor was lodged. Future studies in
+this repository will commit the protocol on its own and register it externally before anything is
+run. Treat the protocol adherence recorded below as an honest account rather than as an independently
+verified one.
+
 Seed 20260727, 10,000 replications for the design comparison, 5,000 for the Bayesian calibration,
-1,000 for the prognostic-adjustment aim. Session details in `results/session_info.txt`. All tables
+2,000 for the prognostic-adjustment aim. Session details in `results/session_info.txt`. All tables
 below are written to `results/` by that script; no number in this document was typed by hand.
 
 ---
@@ -155,17 +163,18 @@ patients enters the trial analysis as a pre-specified covariate. Four correlated
 
 | Quantity | Estimate | Monte Carlo SE |
 |---|---|---|
-| Ratio of adjusted to unadjusted standard error | 0.920 | 0.0009 |
-| Implied sample-size reduction | 8.0% | 0.09% |
-| Type I error, unadjusted | 0.023 | 0.0047 |
-| Type I error, adjusted | 0.020 | 0.0044 |
-| Power, unadjusted | 0.453 | 0.016 |
-| Power, adjusted | 0.478 | 0.016 |
+| Ratio of adjusted to unadjusted standard error | 0.920 | 0.0007 |
+| Implied sample-size reduction | 8.0% | 0.07% |
+| Type I error, unadjusted | 0.030 | 0.0038 |
+| Type I error, adjusted | 0.024 | 0.0034 |
+| Power, unadjusted | 0.457 | 0.011 |
+| Power, adjusted | 0.483 | 0.011 |
 
-Adjustment does not inflate the type I error rate. The adjusted estimate of 0.020 sits about one
-Monte Carlo standard error below the nominal 0.025 and is statistically indistinguishable from the
-unadjusted 0.023, which is the property that makes this method usable: randomisation is untouched, so
-only the residual variance changes.
+Adjustment does not inflate the type I error rate. The adjusted estimate of 0.024 sits within a third
+of a Monte Carlo standard error of the nominal 0.025 and below the unadjusted 0.030, which is the
+property that makes this method usable: randomisation is untouched, so only the residual variance
+changes. The unadjusted estimate is 1.2 Monte Carlo standard errors above nominal, which is ordinary
+sampling variation rather than a finding.
 
 The 8 percent sample-size reduction is real but modest, and it sits at the low end of the 10 to 30
 percent range reported for PROCOVA. That is expected and should not be oversold. The gain depends
@@ -288,7 +297,14 @@ is how the group-sequential undercoverage in A2 was found.
 
 ## Deviations from the protocol
 
-Three, all recorded here rather than silently absorbed.
+Four, all recorded here rather than silently absorbed.
+
+0. The first published version of this report ran the prognostic-adjustment aim at 1,000 repetitions
+   rather than the 2,000 the protocol specifies, and did not record the change. It was found in a
+   later audit and the aim has been re-run at the pre-specified 2,000; the table in A3 is the re-run.
+   The correction moved the adjusted type I error from 0.020 to 0.024 and the unadjusted from 0.023
+   to 0.030, and left the standard-error ratio unchanged at 0.920. Recording it here rather than
+   quietly republishing is the whole point of having a protocol.
 
 1. The protocol specified a prior for the value-of-information analysis without fixing its scale. The
    analysis places the prior on the log relative risk rather than on the risk difference, so that

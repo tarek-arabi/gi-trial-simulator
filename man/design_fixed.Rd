@@ -13,7 +13,10 @@ design_fixed(scenario, alpha = NULL, power = NULL, allocation_ratio = NULL)
 \item{scenario}{A \code{gi_scenario}, as returned by \code{\link[=scenario]{scenario()}}.}
 
 \item{alpha}{One-sided type I error rate. Defaults to
-\code{scenario$defaults$alpha}.}
+\code{scenario$defaults$alpha}, which is interpreted on the pack's own \code{sided}
+convention: a pack recording \code{sided: 2} and \code{alpha: 0.05}, as a published
+trial usually states it, yields a one-sided 0.025 and an identical design.
+An \code{alpha} supplied here is always one-sided and is never halved.}
 
 \item{power}{Target power. Defaults to \code{scenario$defaults$power}.}
 

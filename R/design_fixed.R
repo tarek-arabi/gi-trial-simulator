@@ -92,12 +92,37 @@ gi_check_scenario <- function(scenario) {
 gi_resolve_defaults <- function(scenario, alpha, power, allocation_ratio) {
   d <- scenario$defaults %||% list()
 
+  # A pack records the convention its source paper used. Published trials
+  # overwhelmingly state a two-sided alpha, and a pack that cannot say so has to
+  # silently rewrite its source, which is exactly what a validation dataset must
+  # not do. Designs here are still built one-sided: for a two-arm superiority
+  # test the two conventions give the same critical value and the same sample
+  # size, since z(1 - 0.05/2) = z(1 - 0.025). Verified against rpact 4.2.0 for
+  # both getSampleSizeRates and getSampleSizeMeans.
+  #
+  # An `alpha` passed by the caller is one-sided by definition (see the roxygen
+  # for design_fixed), so only a pack-supplied alpha is halved.
+  alpha_supplied <- !is.null(alpha)
+  sided <- as.numeric(d$sided %||% 1)
+  if (length(sided) != 1L || is.na(sided) || !sided %in% c(1, 2)) {
+    stop(
+      "Pack default `sided` is ", format(d$sided),
+      "; it must be 1 or 2.",
+      call. = FALSE
+    )
+  }
+
   alpha <- alpha %||% d$alpha %||% 0.025
   power <- power %||% d$power %||% 0.9
   allocation_ratio <- allocation_ratio %||% d$allocation_ratio %||% 1
 
-  if (!is.numeric(alpha) || length(alpha) != 1L || is.na(alpha) ||
-    alpha <= 0 || alpha >= 0.5) {
+  if (!is.numeric(alpha) || length(alpha) != 1L || is.na(alpha) || alpha <= 0) {
+    stop("`alpha` must be a single positive number.", call. = FALSE)
+  }
+  if (!alpha_supplied && sided == 2) {
+    alpha <- alpha / 2
+  }
+  if (alpha >= 0.5) {
     stop("`alpha` must be a single number strictly between 0 and 0.5.", call. = FALSE)
   }
   if (!is.numeric(power) || length(power) != 1L || is.na(power) ||
@@ -116,16 +141,10 @@ gi_resolve_defaults <- function(scenario, alpha, power, allocation_ratio) {
     stop("`allocation_ratio` must be a single positive number.", call. = FALSE)
   }
 
-  sided <- d$sided %||% 1
-  if (!identical(as.numeric(sided), 1)) {
-    stop(
-      "Pack default `sided` is ", sided,
-      "; gitrialsim builds one-sided superiority designs only.",
-      call. = FALSE
-    )
-  }
-
-  list(alpha = alpha, power = power, allocation_ratio = allocation_ratio)
+  list(
+    alpha = alpha, power = power, allocation_ratio = allocation_ratio,
+    sided_source = sided
+  )
 }
 
 # Per-arm sizes are rounded up so that no arm is under-recruited. With 1:1
@@ -159,7 +178,10 @@ gi_round_arms <- function(n_treatment_raw, n_control_raw) {
 #'
 #' @param scenario A `gi_scenario`, as returned by [scenario()].
 #' @param alpha One-sided type I error rate. Defaults to
-#'   `scenario$defaults$alpha`.
+#'   `scenario$defaults$alpha`, which is interpreted on the pack's own `sided`
+#'   convention: a pack recording `sided: 2` and `alpha: 0.05`, as a published
+#'   trial usually states it, yields a one-sided 0.025 and an identical design.
+#'   An `alpha` supplied here is always one-sided and is never halved.
 #' @param power Target power. Defaults to `scenario$defaults$power`.
 #' @param allocation_ratio Planned ratio of treatment-arm to control-arm
 #'   sample size. Defaults to `scenario$defaults$allocation_ratio`.
@@ -228,7 +250,8 @@ design_fixed <- function(scenario, alpha = NULL, power = NULL,
     n_treatment = n$n_treatment,
     allocation_ratio = opts$allocation_ratio,
     direction_upper = gi_direction_upper(scenario),
-    critical_value = as.numeric(rpact_design$criticalValues)
+    critical_value = as.numeric(rpact_design$criticalValues),
+    sided_source = opts$sided_source
   )
   if (is_continuous) {
     detail$standardised_effect <- means$effect / means$sd

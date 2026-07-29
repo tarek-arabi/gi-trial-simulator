@@ -1,6 +1,8 @@
 # ADEMP protocol: designing the definitive trial of ERCP timing in acute cholangitis
 
-This protocol is written and committed **before** the simulation is run. It follows the ADEMP
+This protocol is written **before** the simulation is run. It landed in the repository in the same
+commit as the results, so the history does not independently evidence that ordering; see the caveat
+in `REPORT.md`. It follows the ADEMP
 structure of Morris, White and Crowther (Stat Med 2019;38(11):2074-2102, doi:10.1002/sim.8086):
 Aims, Data-generating mechanisms, Estimands, Methods, Performance measures.
 

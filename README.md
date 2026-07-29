@@ -71,6 +71,11 @@ gs_boundaries(g)
 
 Maximum 3,064 against the fixed design's 3,028, but an expected 2,456 under the alternative.
 
+This example has no futility boundary, which is the default. Aim A2 of the flagship analysis adds a
+non-binding O'Brien-Fleming futility boundary and so reports a larger maximum, 3,208, and a slightly
+larger expected 2,490; buying the option to stop early for futility costs about 4.7 percent on the
+maximum. The two sets of numbers describe different designs rather than disagreeing.
+
 ## Parameter packs
 
 A pack is a YAML file describing one clinical scenario: its arms, its endpoints with control and
@@ -81,12 +86,13 @@ they can be versioned, cited and audited independently of the engine that reads 
 list_packs()
 ```
 
-Two packs ship with the package, both built only from published aggregate results:
+Three packs ship with the package, all built only from published aggregate results:
 
 | Pack | Question | Primary source |
 |---|---|---|
 | `ercp_acute_cholangitis` | Urgent versus early ERCP in acute cholangitis | Jagtap et al., *Gut* 2026, [10.1136/gutjnl-2025-337279](https://doi.org/10.1136/gutjnl-2025-337279) |
 | `hrs_terlipressin` | Terlipressin versus midodrine and octreotide in hepatorenal syndrome | Cavallin et al., *Hepatology* 2015;62:567-574, [10.1002/hep.27709](https://doi.org/10.1002/hep.27709) |
+| `dph_colonoscopy_sedation` | Diphenhydramine as an adjunct for colonoscopy sedation | Nusrat et al., *Gastrointest Endosc* 2018;88(4):695-702, [10.1016/j.gie.2018.04.2342](https://doi.org/10.1016/j.gie.2018.04.2342) |
 
 Every event rate carries a citation and a `verified` date recording when it was last checked against
 its primary source.
@@ -166,8 +172,10 @@ in this package until shown otherwise.
 ## Analyses
 
 `analysis/ercp_flagship/` contains a full simulation study of the definitive ERCP-timing trial. Its
-ADEMP protocol was written and committed before the study was run, which is the point of committing
-it separately.
+ADEMP protocol was written before the study was run, though it entered the repository in the same
+commit as the results, so the history does not independently corroborate that ordering; the report
+says so in its own header. Protocols for later studies are committed on their own and registered
+externally beforehand, which is what makes the claim checkable rather than merely asserted.
 
 ## Citation
 
