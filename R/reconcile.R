@@ -119,6 +119,130 @@ gi_check_rate <- function(x, nm) {
   invisible(x)
 }
 
+# Time-to-event reference methods. For a survival design the quantity a formula
+# returns is the required number of EVENTS; patients follow only after accrual
+# and follow-up assumptions. So this is a separate reconciliation, against a
+# separate published quantity, and the two strata are not pooled.
+#
+# Schoenfeld D. The asymptotic properties of nonparametric tests for comparing
+# survival distributions. Biometrika 1981;68(1):316-319. Verified to equal
+# rpact::getSampleSizeSurvival()$eventsFixed to all printed digits at hazard
+# ratios 0.5 through 0.8 and at 80% and 90% power. rpact implements this one.
+#
+# Freedman LS. Tables of the number of patients required in clinical trials
+# using the logrank test. Stat Med 1982;1(2):121-129. Verified to run above
+# Schoenfeld by 8.1% at HR 0.5, falling to 0.8% at HR 0.8.
+GI_EVENT_METHODS <- c("rpact", "schoenfeld", "freedman")
+
+#' Required events under one named survival formulation
+#'
+#' @param hazard_ratio Assumed hazard ratio, strictly positive and not 1.
+#' @param alpha_1sided One-sided type I error rate.
+#' @param power Target power.
+#' @param allocation_ratio Treatment-to-control allocation. Only 1 has been
+#'   verified against rpact; other values use the same published formulas with
+#'   their allocation term but are not pinned.
+#' @param method One of `"rpact"`, `"schoenfeld"` or `"freedman"`.
+#' @return A single number, the required number of events.
+#' @seealso [reconcile_events()]
+#' @examples
+#' gi_events_reference(0.7, 0.025, 0.8, method = "schoenfeld")
+#' gi_events_reference(0.7, 0.025, 0.8, method = "freedman")
+#' @export
+gi_events_reference <- function(hazard_ratio, alpha_1sided, power,
+                                allocation_ratio = 1, method = "rpact") {
+  if (!is.numeric(hazard_ratio) || length(hazard_ratio) != 1L ||
+    is.na(hazard_ratio) || hazard_ratio <= 0) {
+    stop("`hazard_ratio` must be a single positive number.", call. = FALSE)
+  }
+  if (isTRUE(all.equal(hazard_ratio, 1))) {
+    stop("`hazard_ratio` of 1 implies no effect and no finite event count.",
+      call. = FALSE
+    )
+  }
+  if (!is.numeric(alpha_1sided) || length(alpha_1sided) != 1L ||
+    is.na(alpha_1sided) || alpha_1sided <= 0 || alpha_1sided >= 0.5) {
+    stop("`alpha_1sided` must be a single number strictly between 0 and 0.5.",
+      call. = FALSE
+    )
+  }
+  if (!is.numeric(power) || length(power) != 1L || is.na(power) ||
+    power <= 0 || power >= 1) {
+    stop("`power` must be a single number strictly between 0 and 1.", call. = FALSE)
+  }
+  if (!is.numeric(allocation_ratio) || length(allocation_ratio) != 1L ||
+    is.na(allocation_ratio) || allocation_ratio <= 0) {
+    stop("`allocation_ratio` must be a single positive number.", call. = FALSE)
+  }
+  method <- match.arg(method, GI_EVENT_METHODS)
+
+  za <- stats::qnorm(1 - alpha_1sided)
+  zb <- stats::qnorm(power)
+  r <- allocation_ratio
+
+  switch(method,
+    rpact = {
+      design <- rpact::getDesignGroupSequential(
+        kMax = 1L, alpha = alpha_1sided, beta = 1 - power, sided = 1L
+      )
+      ss <- rpact::getSampleSizeSurvival(
+        design = design, hazardRatio = hazard_ratio,
+        allocationRatioPlanned = r
+      )
+      as.numeric(ss$eventsFixed)
+    },
+    schoenfeld = (za + zb)^2 * (1 + r)^2 / (r * log(hazard_ratio)^2),
+    freedman = (za + zb)^2 * (1 + r * hazard_ratio)^2 /
+      (r * (1 - hazard_ratio)^2)
+  )
+}
+
+#' Reconcile a published required-events figure against the survival formulas
+#'
+#' The time-to-event counterpart of [reconcile_sample_size()]. The published
+#' quantity compared against is the required number of **events**, because that
+#' is what a survival sample size formula returns.
+#'
+#' @param published_events Required events stated in the paper.
+#' @param hazard_ratio,alpha_1sided,power,allocation_ratio Design inputs as the
+#'   paper states them; halve a reported two-sided alpha.
+#' @param tolerance Relative agreement within which a method counts as
+#'   reproducing the published figure. Defaults to 0.02.
+#' @return A data frame with one row per method, ordered by absolute relative
+#'   difference, carrying `attribution` and `reproduced` as attributes.
+#' @seealso [gi_events_reference()], [reconcile_sample_size()]
+#' @examples
+#' r <- reconcile_events(250, hazard_ratio = 0.7, alpha_1sided = 0.025, power = 0.8)
+#' attr(r, "attribution")
+#' @export
+reconcile_events <- function(published_events, hazard_ratio, alpha_1sided,
+                             power, allocation_ratio = 1, tolerance = 0.02) {
+  if (!is.numeric(published_events) || length(published_events) != 1L ||
+    is.na(published_events) || published_events <= 0) {
+    stop("`published_events` must be a single positive number.", call. = FALSE)
+  }
+  n <- vapply(
+    GI_EVENT_METHODS,
+    function(m) {
+      gi_events_reference(hazard_ratio, alpha_1sided, power, allocation_ratio, m)
+    },
+    numeric(1)
+  )
+  pct <- n / published_events - 1
+  out <- data.frame(
+    method = GI_EVENT_METHODS,
+    events = as.numeric(n),
+    pct_vs_published = as.numeric(pct),
+    agrees = abs(as.numeric(pct)) <= tolerance,
+    stringsAsFactors = FALSE
+  )
+  out <- out[order(abs(out$pct_vs_published)), ]
+  row.names(out) <- NULL
+  attr(out, "attribution") <- if (out$agrees[1]) out$method[1] else NA_character_
+  attr(out, "reproduced") <- out$agrees[1]
+  out
+}
+
 #' Reconcile a published sample size against every standard formulation
 #'
 #' Computes the per-arm sample size under each method in

@@ -165,3 +165,53 @@ test_that("gi_n_reference validates its inputs", {
   expect_error(gi_n_reference(0.1, 0.05, 0.025, 1.2), "power")
   expect_error(gi_n_reference(0.1, 0.1, 0.025, 0.8), "must differ")
 })
+
+test_that("Schoenfeld equals rpact's required events across hazard ratios", {
+  # rpact::getSampleSizeSurvival implements Schoenfeld. Pinning it means a
+  # disagreement with a published survival calculation can be attributed to the
+  # trial's choice of formula rather than left unexplained, exactly as the
+  # continuity correction does in the binary stratum.
+  for (hr in c(0.5, 0.6, 0.667, 0.7, 0.75, 0.8)) {
+    for (pw in c(0.80, 0.90)) {
+      expect_equal(
+        gi_events_reference(hr, 0.025, pw, method = "rpact"),
+        gi_events_reference(hr, 0.025, pw, method = "schoenfeld"),
+        tolerance = 1e-6
+      )
+    }
+  }
+})
+
+test_that("Freedman sits above Schoenfeld, by more for larger effects", {
+  gap <- function(hr) {
+    f <- gi_events_reference(hr, 0.025, 0.8, method = "freedman")
+    s <- gi_events_reference(hr, 0.025, 0.8, method = "schoenfeld")
+    f / s - 1
+  }
+  expect_gt(gap(0.5), gap(0.8))
+  expect_gt(gap(0.5), 0.05)
+  expect_lt(gap(0.8), 0.02)
+  expect_true(all(vapply(c(0.5, 0.6, 0.7, 0.8), gap, numeric(1)) > 0))
+})
+
+test_that("reconcile_events attributes a Freedman-sized figure to Freedman", {
+  # A trial that used Freedman at HR 0.5, 80% power, one-sided 0.025 needs 71
+  # events where rpact would say 65. Without attribution that reads as a 8%
+  # failure; with it, the discrepancy has a name.
+  fre <- gi_events_reference(0.5, 0.025, 0.8, method = "freedman")
+  r <- reconcile_events(round(fre), hazard_ratio = 0.5, alpha_1sided = 0.025, power = 0.8)
+  expect_identical(attr(r, "attribution"), "freedman")
+  expect_true(attr(r, "reproduced"))
+
+  sch <- gi_events_reference(0.5, 0.025, 0.8, method = "schoenfeld")
+  r2 <- reconcile_events(round(sch), hazard_ratio = 0.5, alpha_1sided = 0.025, power = 0.8)
+  expect_true(attr(r2, "attribution") %in% c("rpact", "schoenfeld"))
+})
+
+test_that("gi_events_reference validates its inputs", {
+  expect_error(gi_events_reference(0, 0.025, 0.8), "hazard_ratio")
+  expect_error(gi_events_reference(1, 0.025, 0.8), "no effect")
+  expect_error(gi_events_reference(0.7, 0.6, 0.8), "alpha_1sided")
+  expect_error(gi_events_reference(0.7, 0.025, 1.5), "power")
+  expect_error(reconcile_events(0, 0.7, 0.025, 0.8), "published_events")
+})
