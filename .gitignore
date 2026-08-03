@@ -27,3 +27,19 @@ Icon?
 # technical materials and the adjudication of it are committed under
 # analysis/reproducibility_audit/independent_reaudit/.
 analysis/reproducibility_audit/independent_reaudit/*.docx
+
+# Frame harvest: the .gz is committed so the audit reproduces without refetching;
+# the uncompressed copy and the fetch logs are local scratch.
+analysis/reproducibility_audit/frame_harvest3.jsonl
+analysis/reproducibility_audit/frame_harvest3.prehyphen.jsonl
+analysis/reproducibility_audit/harvest*.log
+analysis/reproducibility_audit/leaked_to_screen*.json
+analysis/reproducibility_audit/npv_sample.json
+
+# Staging copy of the independent re-audit; the committed copy lives under
+# analysis/reproducibility_audit/independent_reaudit/
+4_independent_full_reaudit/
+
+# Python bytecode
+__pycache__/
+*.pyc

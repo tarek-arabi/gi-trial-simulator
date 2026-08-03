@@ -215,3 +215,32 @@ test_that("gi_events_reference validates its inputs", {
   expect_error(gi_events_reference(0.7, 0.025, 1.5), "power")
   expect_error(reconcile_events(0, 0.7, 0.025, 0.8), "published_events")
 })
+
+test_that("the arcsine reference matches pwr, which implements it independently", {
+  # Raised during an adversarial review of the reproducibility audit, where a
+  # reviewer claimed this formula was out by a factor of two. It is not, but the
+  # claim was only refutable by recomputation, so the check is pinned here. pwr
+  # solves power = pnorm(h * sqrt(n / 2) - z), with Cohen's h = 2asin(sqrt(p1)) -
+  # 2asin(sqrt(p2)); the sqrt(n / 2) is the factor the objection missed.
+  skip_if_not_installed("pwr")
+  grid <- expand.grid(
+    p1 = c(0.05, 0.10, 0.25, 0.50, 0.71),
+    p2 = c(0.02, 0.15, 0.35, 0.83),
+    power = c(0.80, 0.90),
+    alpha1 = c(0.025, 0.05)
+  )
+  grid <- grid[abs(grid$p1 - grid$p2) > 0.01, ]
+  for (i in seq_len(nrow(grid))) {
+    g <- grid[i, ]
+    ours <- gi_n_reference(g$p1, g$p2, g$alpha1, g$power, "arcsine")
+    theirs <- pwr::pwr.2p.test(
+      h = pwr::ES.h(g$p1, g$p2), sig.level = 2 * g$alpha1, power = g$power
+    )$n
+    # 1e-4 relative is set by pwr's precision, not by what makes this pass:
+    # pwr solves for n by uniroot, so it lands within about 1e-5 relative of the
+    # closed form. The error this test exists to catch would be a factor of two.
+    expect_equal(ours, theirs, tolerance = 1e-4,
+      info = sprintf("p1=%.2f p2=%.2f alpha1=%.3f power=%.2f",
+                     g$p1, g$p2, g$alpha1, g$power))
+  }
+})
