@@ -15,3 +15,15 @@ renv/local/
 # OS / editor
 .DS_Store
 *.Rproj
+
+# macOS custom folder icons. The real filename is "Icon" followed by a carriage
+# return, so the trailing wildcard is doing real work here.
+Icon?
+
+# Google Drive sync scratch
+.tmp.driveupload/
+
+# Correspondence: the independent re-audit write-up stays with its author. Its
+# technical materials and the adjudication of it are committed under
+# analysis/reproducibility_audit/independent_reaudit/.
+analysis/reproducibility_audit/independent_reaudit/*.docx
