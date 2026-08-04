@@ -217,9 +217,9 @@ test_that("gi_events_reference validates its inputs", {
 })
 
 test_that("the arcsine reference matches pwr, which implements it independently", {
-  # Raised during an adversarial review of the reproducibility audit, where a
-  # reviewer claimed this formula was out by a factor of two. It is not, but the
-  # claim was only refutable by recomputation, so the check is pinned here. pwr
+  # Raised during an adversarial review, where a reviewer claimed this formula
+  # was out by a factor of two. It is not, but the claim was only refutable by
+  # recomputation, so the check is pinned here rather than argued. pwr
   # solves power = pnorm(h * sqrt(n / 2) - z), with Cohen's h = 2asin(sqrt(p1)) -
   # 2asin(sqrt(p2)); the sqrt(n / 2) is the factor the objection missed.
   skip_if_not_installed("pwr")
